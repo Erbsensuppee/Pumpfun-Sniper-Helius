@@ -1,6 +1,6 @@
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, VersionedTransaction, Transaction } from "@solana/web3.js";
 import { SolanaTracker } from "solana-swap";
-import { performSwap, SOL_ADDR } from "./lib.js";
+//import { performSwap, SOL_ADDR } from "./lib.js";
 import bs58 from "bs58";
 import fs from "fs";
 
@@ -21,12 +21,14 @@ try {
 // RPC URLs
 const RPC_URLS = [
   `https://rpc-mainnet.solanatracker.io/?api_key=${solanaTrackerApiKey}`,
-  `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`
+  `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
+  "https://api.mainnet-beta.solana.com"
 ];
 
 // Configuration Variables
 const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
 const PRIVKEY = privateKey; // Replace with your actual private key
+const SOL_ADDR = "So11111111111111111111111111111111111111112"
 let TOKEN_ADDR = null; // Replace with your target token address
 const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
 const FEES = 0.0003; // Transaction fees
@@ -254,12 +256,143 @@ async function swap(tokenIn, tokenOut, solanaTracker, keypair, connection, amoun
   }
 }
 
+import axios from "axios";
+
+/**
+ * Perform a swap using Solana Tracker Swap API.
+ * @param {string} fromToken - The mint address of the token you are swapping from (e.g., SOL).
+ * @param {string} toToken - The mint address of the token you are swapping to.
+ * @param {number} amount - The amount of the `fromToken` to swap.
+ * @param {string} payer - The Base58 encoded public key of the payer's wallet.
+ * @param {string} slippage - Slippage tolerance in percentage (e.g., 0.5 for 0.5%).
+ * @param {boolean} forceLegacy - Whether to force legacy transaction format.
+ * @param {string} priorityFee - Priority fee to include with the transaction.
+ * @returns {Promise<object>} - The API response including transaction details.
+ */
+async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = false, priorityFee = "5e-7") {
+  const API_ENDPOINT = "https://swap-v2.solanatracker.io/swap";
+  
+  try {
+    // Build the payload
+    const payload = {
+      from: fromToken,
+      to: toToken,
+      fromAmount: amount,
+      slippage,
+      payer,
+      forceLegacy,
+      priorityFee
+    };
+
+    // Send the request to the Swap API
+    const response = await axios.post(API_ENDPOINT, payload, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    // Check for successful response
+    if (response.status === 200) {
+      console.log("Swap successful:", response.data);
+      return response.data; // Return transaction details
+    } else {
+      console.error("Swap failed with status:", response.status, response.statusText);
+      return null;
+    }
+  } catch (error) {
+    console.error("Error performing swap:", error.message);
+    if (error.response) {
+      console.error("Response status:", error.response.status);
+      console.error("Response data:", error.response.data);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Processes a transaction response and deserializes it.
+ * @param {object} responseData - The API response containing transaction details.
+ * @returns {Transaction|VersionedTransaction|null} - The deserialized transaction object or null if deserialization fails.
+ */
+function deserializeTransaction(responseData) {
+  try {
+    if (!responseData || !responseData.txn) {
+      console.error("Invalid response data: Missing 'txn' field.");
+      return null;
+    }
+
+    // Deserialize the transaction from the base64 string
+    const serializedTransactionBuffer = Buffer.from(responseData.txn, "base64");
+    let txn;
+
+    if (responseData.type === "v0") {
+      txn = VersionedTransaction.deserialize(serializedTransactionBuffer);
+    } else {
+      txn = Transaction.from(serializedTransactionBuffer);
+    }
+
+    if (!txn) {
+      console.error("Failed to deserialize the transaction.");
+      return null;
+    }
+
+    console.log("Transaction deserialized successfully.");
+    return txn;
+  } catch (error) {
+    console.error("Error during transaction deserialization:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Sends a Solana transaction to the network.
+ * @param {Transaction|VersionedTransaction} txn - The deserialized transaction to send.
+ * @param {Keypair} keypair - The sender's keypair to sign the transaction.
+ * @param {Connection} connection - Solana connection object.
+ * @returns {Promise<string|null>} - The transaction ID or null if sending fails.
+ */
+async function sendTransaction(txn, keypair, connection) {
+  try {
+    let txid;
+
+    // Check if the transaction is versioned or legacy
+    if (txn instanceof VersionedTransaction) {
+      // Sign and send versioned transaction
+      txn.sign([keypair]);
+      try {
+        txid = await connection.sendRawTransaction(txn.serialize(), {
+          skipPreflight: false,
+        });       
+      } catch (error) {
+        console.error("Error send Raw Transaction " + error);
+      }
+    } else if (txn instanceof Transaction) {
+      // Sign and send legacy transaction
+      txn.sign(keypair);
+      try {
+        const rawTransaction = txn.serialize();
+        txid = await connection.sendRawTransaction(rawTransaction, {
+          skipPreflight: false,
+        });
+      } catch (error) {
+        console.error("Error send Raw Transaction " + error);
+      }
+    } else {
+      throw new Error("Invalid transaction type");
+    }
+    return txid;
+  } catch (error) {
+    console.error("Error sending transaction:", error.message);
+    return null;
+  }
+}
+
 async function main() {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
   let solanaTracker = new SolanaTracker(keypair, RPC_URLS[0]);
-  let connection = new Connection(RPC_URLS[0], "confirmed");
+  let connection = new Connection(RPC_URLS[2], "confirmed");
 
   let rpcIndex = 0;
   while (true) {
@@ -289,34 +422,108 @@ async function main() {
       }
       pageCounter++;
     }
-
-    try {
-      TOKEN_ADDR = await getNewTokenId();
-      if (TOKEN_ADDR !== 0) {
-        // Buy
-        const buyPromises = Array(4).fill(null).map(() => swapWithRetry(swap, SOL_ADDR, TOKEN_ADDR, solanaTracker, keypair, connection, SOL_BUY_AMOUNT));
-        await Promise.all(buyPromises);
-      } else {
-        console.log("No valid token found for this interval.");
+    // TOKEN_ADDR = await getNewTokenId();
+    TOKEN_ADDR = "6e4L6gZ3qEZGymNNJ4B5X5KUy5rFG2oQoCrrCmnUpump"
+    if (TOKEN_ADDR !== 0) {
+      try {
+        const forceLegacy = false;
+        const priorityFee = 0.0001;
+    
+        // Perform the swap
+        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey, SLIPPAGE, forceLegacy, priorityFee);
+        console.log("Swap Result:", swapResult);
+    
+        // Deserialize the transaction
+        const txn = deserializeTransaction(swapResult);
+        if (txn) {
+          console.log("Deserialized Transaction:", txn);
+    
+          const maxRetries = 5; // Max retry attempts
+          const retryInterval = 3000; // 3 seconds between retries
+          let attempt = 0;
+          let confirmed = false;
+    
+          while (attempt < maxRetries && !confirmed) {
+            try {
+              // Refresh blockhash before each attempt
+              const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+              txn.recentBlockhash = blockhash;
+              txn.lastValidBlockHeight = lastValidBlockHeight;
+              txn.feePayer = keypair.publicKey;
+              txn.sign(keypair);
+    
+              // Simulate transaction to ensure it’s still valid
+              const simulationResult = await connection.simulateTransaction(txn);
+              if (simulationResult.value.err) {
+                console.error("Transaction simulation failed before retry:", simulationResult.value.err);
+                break;
+              }
+    
+              console.log("Transaction simulation successful. Attempting to send...");
+    
+              // Send the transaction
+              const txid = await connection.sendRawTransaction(txn.serialize(), { skipPreflight: true });
+              console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
+    
+              // Check for confirmation
+              const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
+              if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
+                console.log("Transaction confirmed:", txid);
+                confirmed = true;
+              } else {
+                console.error("Transaction not confirmed. Retrying...");
+              }
+            } catch (retryError) {
+              console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
+            }
+    
+            attempt++;
+            if (!confirmed) await new Promise(resolve => setTimeout(resolve, retryInterval)); // Wait before retrying
+          }
+    
+          if (!confirmed) {
+            console.error("Transaction failed after maximum retries.");
+          }
+        } else {
+          console.error("Failed to process the transaction.");
+        }
+      } catch (error) {
+        console.error("Error in transaction logic:", error.message);
       }
-
-      // // Sell
-      // const balance = Math.round(await getTokenBalance(connection, keypair.publicKey, TOKEN_ADDR));
-      // if (balance > 0) {
-      //     await swapWithRetry(swap, TOKEN_ADDR, SOL_ADDR, solanaTracker, keypair, connection, balance);
-      // } else {
-      //     console.warn("Skipping sell operation due to zero balance.");
-      // }
-    } catch (error) {
-      console.error("Error in main loop:", error);
-
-      // Switch to the next RPC URL on error
-      rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
-      const newRpcUrl = RPC_URLS[rpcIndex];
-      console.log(`Switching to RPC URL: ${newRpcUrl}`);
-      connection = new Connection(newRpcUrl, "confirmed");
-      solanaTracker = new SolanaTracker(keypair, newRpcUrl);
     }
+    
+    
+    
+    
+    
+
+    // try {
+    //   TOKEN_ADDR = await getNewTokenId();
+    //   if (TOKEN_ADDR !== 0) {
+    //     // Buy
+    //     const buyPromises = Array(4).fill(null).map(() => swapWithRetry(swap, SOL_ADDR, TOKEN_ADDR, solanaTracker, keypair, connection, SOL_BUY_AMOUNT));
+    //     await Promise.all(buyPromises);
+    //   } else {
+    //     console.log("No valid token found for this interval.");
+    //   }
+
+    //   // // Sell
+    //   // const balance = Math.round(await getTokenBalance(connection, keypair.publicKey, TOKEN_ADDR));
+    //   // if (balance > 0) {
+    //   //     await swapWithRetry(swap, TOKEN_ADDR, SOL_ADDR, solanaTracker, keypair, connection, balance);
+    //   // } else {
+    //   //     console.warn("Skipping sell operation due to zero balance.");
+    //   // }
+    // } catch (error) {
+    //   console.error("Error in main loop:", error);
+
+    //   // Switch to the next RPC URL on error
+    //   rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
+    //   const newRpcUrl = RPC_URLS[rpcIndex];
+    //   console.log(`Switching to RPC URL: ${newRpcUrl}`);
+    //   connection = new Connection(newRpcUrl, "confirmed");
+    //   solanaTracker = new SolanaTracker(keypair, newRpcUrl);
+    // }
   }
 }
 
