@@ -3,5 +3,5 @@
 ## Installation
 Using npm:
 ```
-npm i helius-sdk
+npm install @solana/web3.js solana-swap bs58
 ```
