@@ -1,4 +1,10 @@
-import { Connection, Keypair, PublicKey, VersionedTransaction, Transaction } from "@solana/web3.js";
+import {  Connection, 
+          Keypair, 
+          PublicKey, 
+          VersionedTransaction, 
+          Transaction,
+          sendAndConfirmTransaction
+        } from "@solana/web3.js";
 import { SolanaTracker } from "solana-swap";
 //import { performSwap, SOL_ADDR } from "./lib.js";
 import bs58 from "bs58";
@@ -257,6 +263,7 @@ async function swap(tokenIn, tokenOut, solanaTracker, keypair, connection, amoun
 }
 
 import axios from "axios";
+import { connect } from "http2";
 
 /**
  * Perform a swap using Solana Tracker Swap API.
@@ -388,12 +395,35 @@ async function sendTransaction(txn, keypair, connection) {
   }
 }
 
+const getRecentPrioritizationFees = async () => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getPriorityFeeEstimate",
+      params: [{
+        "accountKeys": ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
+        "options": {
+            "includeAllPriorityFeeLevels": true,
+        }
+      }]
+    }),
+  });
+  const data = await response.json();
+  console.log("Fee: ", data);
+};
+
+
 async function main() {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
   let solanaTracker = new SolanaTracker(keypair, RPC_URLS[0]);
-  let connection = new Connection(RPC_URLS[2], "confirmed");
+  let connection = new Connection(RPC_URLS[0], "confirmed");
 
   let rpcIndex = 0;
   while (true) {
@@ -424,11 +454,11 @@ async function main() {
       pageCounter++;
     }
     // TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "BMQrMsF3edWWjqQESMiMpfswAHrfeMe3rvJBnaWipump"
+    TOKEN_ADDR = "8k81MK4iUH756x3qhbRk72fuCjT731Wny7tVVdxKpump"
     if (TOKEN_ADDR !== 0) {
       try {
         const forceLegacy = false;
-        const priorityFee = 0.0001;
+        const priorityFee = 0.001;
     
         // Perform the swap
         const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
@@ -439,7 +469,7 @@ async function main() {
         if (txn) {
           console.log("Deserialized Transaction:", txn);
     
-          const maxRetries = 5; // Max retry attempts
+          const maxRetries = 1; // Max retry attempts
           let retryInterval = 2000; // Start with 2 seconds
           let attempt = 0;
           let confirmed = false;
@@ -448,12 +478,12 @@ async function main() {
           while (attempt < maxRetries && !confirmed) {
             try {
               // Refresh blockhash before each attempt
-              const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-              txn.recentBlockhash = blockhash;
-              txn.lastValidBlockHeight = lastValidBlockHeight;
-              txn.feePayer = keypair.publicKey;
+
+              txn.recentBlockhash = (
+                await connection.getLatestBlockhash("confirmed")
+              ).blockhash;
               txn.sign(keypair);
-    
+
               // Simulate transaction
               const simulationResult = await connection.simulateTransaction(txn);
               if (simulationResult.value.err) {
@@ -461,14 +491,22 @@ async function main() {
                 break;
               }
               console.log("Transaction simulation successful. Attempting to send...");
-    
+              // Send the transaction
+              // try {
+              //   const txid = await sendAndConfirmTransaction(connection, txn, [
+              //     keypair,
+              //   ]);
+              //   console.log("Transaction sent successfully with signature", txid);
+              // } catch (e) {
+              //   console.error("Failed to send transaction:", e);
+              // }
               // Send the transaction
               txid = await connection.sendRawTransaction(txn.serialize(), { skipPreflight: true });
               console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
     
               // Check confirmation
               const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
-              if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
+              if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "processed") {
                 console.log("Transaction confirmed:", txid);
                 confirmed = true;
               } else {
