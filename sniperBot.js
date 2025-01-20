@@ -269,8 +269,9 @@ import axios from "axios";
  * @param {string} priorityFee - Priority fee to include with the transaction.
  * @returns {Promise<object>} - The API response including transaction details.
  */
-async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = false, priorityFee = "5e-7") {
+async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = true, priorityFee = "5e-7") {
   const API_ENDPOINT = "https://swap-v2.solanatracker.io/swap";
+  //const API_ENDPOINT = "https://swap-api.solanatracker.io/swap"
   
   try {
     // Build the payload
@@ -423,14 +424,14 @@ async function main() {
       pageCounter++;
     }
     // TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "6e4L6gZ3qEZGymNNJ4B5X5KUy5rFG2oQoCrrCmnUpump"
+    TOKEN_ADDR = "BMQrMsF3edWWjqQESMiMpfswAHrfeMe3rvJBnaWipump"
     if (TOKEN_ADDR !== 0) {
       try {
         const forceLegacy = false;
         const priorityFee = 0.0001;
     
         // Perform the swap
-        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey, SLIPPAGE, forceLegacy, priorityFee);
+        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
         console.log("Swap Result:", swapResult);
     
         // Deserialize the transaction
@@ -439,9 +440,10 @@ async function main() {
           console.log("Deserialized Transaction:", txn);
     
           const maxRetries = 5; // Max retry attempts
-          const retryInterval = 3000; // 3 seconds between retries
+          let retryInterval = 2000; // Start with 2 seconds
           let attempt = 0;
           let confirmed = false;
+          let txid = null;
     
           while (attempt < maxRetries && !confirmed) {
             try {
@@ -452,20 +454,19 @@ async function main() {
               txn.feePayer = keypair.publicKey;
               txn.sign(keypair);
     
-              // Simulate transaction to ensure it’s still valid
+              // Simulate transaction
               const simulationResult = await connection.simulateTransaction(txn);
               if (simulationResult.value.err) {
                 console.error("Transaction simulation failed before retry:", simulationResult.value.err);
                 break;
               }
-    
               console.log("Transaction simulation successful. Attempting to send...");
     
               // Send the transaction
-              const txid = await connection.sendRawTransaction(txn.serialize(), { skipPreflight: true });
+              txid = await connection.sendRawTransaction(txn.serialize(), { skipPreflight: true });
               console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
     
-              // Check for confirmation
+              // Check confirmation
               const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
               if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
                 console.log("Transaction confirmed:", txid);
@@ -478,11 +479,22 @@ async function main() {
             }
     
             attempt++;
-            if (!confirmed) await new Promise(resolve => setTimeout(resolve, retryInterval)); // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, retryInterval));
+            retryInterval *= 1.5; // Increase the interval by 50% after each attempt
           }
     
           if (!confirmed) {
             console.error("Transaction failed after maximum retries.");
+            if (txid) {
+              console.log("Fetching transaction details for debugging...");
+              const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
+              if (transactionDetails) {
+                console.log("Transaction Details:", transactionDetails);
+                console.log("Logs:", transactionDetails.meta?.logMessages);
+              } else {
+                console.error("Transaction not found on the blockchain.");
+              }
+            }
           }
         } else {
           console.error("Failed to process the transaction.");
@@ -491,6 +503,7 @@ async function main() {
         console.error("Error in transaction logic:", error.message);
       }
     }
+    
     
     
     
