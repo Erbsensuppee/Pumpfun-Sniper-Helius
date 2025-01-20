@@ -11,19 +11,41 @@ import fs from "fs";
 import axios from "axios";
 
 // Load private key from credentials file
-let privateKey;
+let privateKey1;
+let privateKey2;
+let privateKey3;
+let privateKey4;
+let privateKey5;
 let heliusApiKey;
 let solanaTrackerApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentials.json', 'utf8'));
-    privateKey = credentials.key1;
+    privateKey1 = credentials.key1;
+    privateKey2 = credentials.key2;
+    privateKey3 = credentials.key3;
+    privateKey4 = credentials.key4;
+    privateKey5 = credentials.key5;
     heliusApiKey = credentials.heliusApiKey;
     solanaTrackerApiKey = credentials.solanaTrackerApiKey;
 } catch (error) {
     console.error("Failed to load private key:", error.message);
     process.exit(1);
 }
+// RPC URLs
+const RPC_URLS = [
+  `https://rpc-mainnet.solanatracker.io/?api_key=${solanaTrackerApiKey}`,
+  `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
+  "https://api.mainnet-beta.solana.com",
+  `https://staked.helius-rpc.com/?api-key=${heliusApiKey}`
+];
 
+const privateKeyList = [
+  privateKey1,
+  privateKey2,
+  privateKey3,
+  privateKey4,
+  privateKey5
+]
 function saveCoinsToFile() {
   fs.writeFileSync("boughtCoins.json", JSON.stringify(boughtCoins, null, 2));
   console.log("Bought coins saved to file.");
@@ -31,6 +53,8 @@ function saveCoinsToFile() {
 
 // Store for bought coins
 const boughtCoins = loadBoughtCoins();
+const allBoughtCoinsID = loadBoughtCoinsID();
+console.log("Bought Coins:", allBoughtCoinsID);
 
 function loadBoughtCoins() {
   if (fs.existsSync("boughtCoins.json")) {
@@ -66,17 +90,8 @@ function logBoughtCoin(tokenAddress, txid) {
   console.log("Coin logged as bought:", coin);
 }
 
-// RPC URLs
-const RPC_URLS = [
-  `https://rpc-mainnet.solanatracker.io/?api_key=${solanaTrackerApiKey}`,
-  `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
-  "https://api.mainnet-beta.solana.com",
-  `https://staked.helius-rpc.com/?api-key=${heliusApiKey}`
-];
-
 // Configuration Variables
 const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
-const PRIVKEY = privateKey; // Replace with your actual private key
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
 let TOKEN_ADDR = null; // Replace with your target token address
 const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
@@ -208,6 +223,55 @@ async function getNewTokenId() {
     return 0; // Return a default value in case of an error
   }
 }
+
+/**
+ * Fetches the largest accounts for a token and counts the number of wallets with a balance > 0.
+ *
+ * @param {string} tokenId - The ID of the token to fetch wallet holders for.
+
+ * @returns {Promise<number>} - The count of wallets with `uiAmount > 0`.
+ */
+async function countWalletHolders(tokenId) {
+  try {
+    console.log("Checking Token ID: ", tokenId);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTokenLargestAccounts",
+        "params": [tokenId],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(`Failed to fetch token largest accounts: ${response.statusText}`);
+      return 0; // Return 0 if the fetch fails
+    }
+
+    const data = await response.json();
+
+    // Check if the response contains the required structure
+    if (!data.result || !data.result.value) {
+      console.error("Invalid response structure:", data);
+      return 0; // Return 0 if the response is invalid
+    }
+
+    // Count wallets with uiAmount > 0
+    const walletCount = data.result.value.filter(account => account.uiAmount > 0).length;
+    console.log(`Number of wallet holders with balance > 0 for token ${tokenId}: ${walletCount}`);
+
+    return walletCount;
+  } catch (error) {
+    console.error("Error fetching wallet holders:", error.message);
+    return 0; // Return 0 if an error occurs
+  }
+}
+
 
 async function countdownAndWait(ms) {
   let secondsLeft = Math.ceil(ms / 1000);
@@ -413,9 +477,8 @@ async function sendTransaction(txn, keypair, connection) {
  * - The function requires a valid `TOKEN_ADDR` and assumes that `performSwap`, `sendTransaction`,
  *   and other supporting functions are correctly implemented and available in the scope.
  */
-async function handleTransaction(action, TOKEN_ADDR) {
+async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
-  let connection = new Connection(RPC_URLS[1], "confirmed");
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
 
@@ -471,6 +534,7 @@ async function handleTransaction(action, TOKEN_ADDR) {
             switch (action) {
               case "buy":
                 logBoughtCoin(TOKEN_ADDR, txid);
+                storeBoughtCoin(TOKEN_ADDR);
                 break;
               case "sell":
                 removeBoughtCoin(TOKEN_ADDR);
@@ -531,9 +595,117 @@ async function handleTransaction(action, TOKEN_ADDR) {
   }
 }
 
+async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWallets = 5) {
+  try {
+    let prevWalletHolder = await countWalletHolders(tokenAddr);
+    let actWalletHolder;
+
+    for (let i = 0; i < privateKeyList.length && i < maxWallets; i++) {
+      console.log(`Using Wallet ${i + 1} to perform buy transaction...`);
+      
+      // Attempt to buy with the current wallet
+      await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
+
+      // Recalculate wallet holders
+      actWalletHolder = await countWalletHolders(tokenAddr);
+
+      if ((prevWalletHolder + 1) < actWalletHolder) {
+        console.log(`Wallet ${i + 1} buy successful. Selling all wallets used so far...`);
+        
+        // Sell from all previous wallets
+        for (let j = i; j >= 0; j--) {
+          console.log(`Selling from Wallet ${j + 1}...`);
+          await handleTransaction("sell", tokenAddr, privateKeyList[j], connection);
+        }
+        return; // Exit function after selling
+      } else {
+        console.log(`Wallet ${i + 1} buy did not increase holders. Retrying with next wallet...`);
+        prevWalletHolder = actWalletHolder; // Update previous wallet holder count
+      }
+
+      // If max wallets are reached, sell all wallets used
+      if (i === maxWallets - 1) {
+        console.log(`Max wallets (${maxWallets}) reached. Selling all wallets...`);
+        for (let j = i; j >= 0; j--) {
+          console.log(`Selling from Wallet ${j + 1}...`);
+          await handleTransaction("sell", tokenAddr, privateKeyList[j], connection);
+        }
+        return; // Exit function after selling
+      }
+    }
+
+    console.log(`Buy/Sell cycle complete. Final wallet holders: ${actWalletHolder}`);
+  } catch (error) {
+    console.error("Error in buy/sell cycle:", error.message);
+  }
+}
+
+/**
+ * Stores the ID of a bought coin in a file.
+ * @param {string} coinId - The ID of the bought coin.
+ * @param {string} filePath - The path to the file storing bought coins.
+ */
+function storeBoughtCoin(coinId, filePath = "boughtCoinsID.json") {
+  try {
+    // Read existing data or initialize an empty array
+    let boughtCoins = [];
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, "utf8");
+      boughtCoins = JSON.parse(fileData);
+    }
+
+    // Add the new coin ID if not already present
+    if (!boughtCoins.includes(coinId)) {
+      boughtCoins.push(coinId);
+      fs.writeFileSync(filePath, JSON.stringify(boughtCoins, null, 2));
+      console.log(`Coin ID ${coinId} stored successfully.`);
+    } else {
+      console.log(`Coin ID ${coinId} is already stored.`);
+    }
+  } catch (error) {
+    console.error("Error storing bought coin:", error.message);
+  }
+}
+
+/**
+ * Loads the IDs of bought coins from a file.
+ * @param {string} filePath - The path to the file storing bought coins.
+ * @returns {Array<string>} - The list of bought coin IDs.
+ */
+function loadBoughtCoinsID(filePath = "boughtCoinsID.json") {
+  try {
+    if (fs.existsSync(filePath)) {
+      const fileData = fs.readFileSync(filePath, "utf8");
+      return JSON.parse(fileData);
+    } else {
+      console.log("No bought coins file found. Returning an empty list.");
+      return [];
+    }
+  } catch (error) {
+    console.error("Error loading bought coins:", error.message);
+    return [];
+  }
+}
+
+/**
+ * Checks if a coin ID has already been bought.
+ * @param {string} coinId - The ID of the coin to check.
+ * @param {string} filePath - The path to the file storing bought coins.
+ * @returns {boolean} - True if the coin was already bought, otherwise false.
+ */
+function isCoinAlreadyBought(coinId, filePath = "boughtCoinsID.json") {
+  try {
+    const boughtCoins = loadBoughtCoins(filePath);
+    return boughtCoins.includes(coinId);
+  } catch (error) {
+    console.error("Error checking bought coin:", error.message);
+    return false;
+  }
+}
 
 async function main() {
-  let rpcIndex = 0;
+  let connection = new Connection(RPC_URLS[1], "confirmed");
+
   while (true) {
     let nextTime;
     const now = new Date();
@@ -562,10 +734,10 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "8k81MK4iUH756x3qhbRk72fuCjT731Wny7tVVdxKpump";
-    if (TOKEN_ADDR !== 0) {
+    TOKEN_ADDR = "BMQrMsF3edWWjqQESMiMpfswAHrfeMe3rvJBnaWipump";
+    if (TOKEN_ADDR !== 0 && !isCoinAlreadyBought(TOKEN_ADDR)) {
       try {
-        await handleTransaction("sell", TOKEN_ADDR);
+        executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 5);
       } catch (error) {
         console.log("Error: handleTransaction handler "+ error)
       }
