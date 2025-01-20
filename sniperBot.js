@@ -4,7 +4,8 @@ import {  Connection,
           VersionedTransaction, 
           Transaction,
           sendAndConfirmTransaction,
-          sendAndConfirmRawTransaction          
+          sendAndConfirmRawTransaction,
+          ComputeBudgetProgram        
         } from "@solana/web3.js";
 import { SolanaTracker } from "solana-swap";
 //import { performSwap, SOL_ADDR } from "./lib.js";
@@ -93,7 +94,7 @@ const SLIPPAGE = 10; // Slippage tolerance percentage
 const RETRY_DELAY = 500; // Delay between retries in milliseconds
 const MAX_RETRIES = 3; // Maximum number of retry attempts
 
-const url = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
+const HeliusURL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
 
 let assetDatabase = null;
 let pageCounter = 1;
@@ -125,7 +126,7 @@ async function fetchMetadata(uri) {
 
 async function getAssetsByAuthority() {
   console.log(`Fetching assets for page ${pageCounter}...`);
-  const response = await fetch(url, {
+  const response = await fetch(HeliusURL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ async function getNewTokenId() {
 
       console.log("Checking Token ID: ", tokenId);
 
-      const response = await fetch(url, {
+      const response = await fetch(HeliusURL, {
         method: 'POST',
         headers: {
           "Content-Type": "application/json",
@@ -327,7 +328,7 @@ import { connect } from "http2";
  * @param {string} priorityFee - Priority fee to include with the transaction.
  * @returns {Promise<object>} - The API response including transaction details.
  */
-async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = true, priorityFee = "5e-7") {
+async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = true) {
   const API_ENDPOINT = "https://swap-v2.solanatracker.io/swap";
   //const API_ENDPOINT = "https://swap-api.solanatracker.io/swap"
   
@@ -339,8 +340,7 @@ async function performSwap(fromToken, toToken, amount, payer, slippage, forceLeg
       fromAmount: amount,
       slippage,
       payer,
-      forceLegacy,
-      priorityFee
+      forceLegacy
     };
 
     // Send the request to the Swap API
@@ -451,6 +451,36 @@ async function sendTransaction(txn, keypair, connection) {
   }
 }
 
+async function getPriorityFeeEstimate(fromKeypair, connection, priorityLevel, transaction) {
+  transaction.recentBlockhash = (
+      await connection.getLatestBlockhash()
+    ).blockhash;
+  transaction.sign(fromKeypair);
+  const response = await fetch(HeliusURL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "1",
+      method: "getPriorityFeeEstimate",
+      params: [
+        {
+          transaction: bs58.encode(transaction.serialize()), // Pass the serialized transaction in Base58
+          options: { priorityLevel: priorityLevel },
+        },
+      ],
+    }),
+  });
+  const data = await response.json();
+  console.log(
+    "Fee in function for",
+    priorityLevel,
+    " :",
+    data.result.priorityFeeEstimate
+  );
+  return data.result;
+}
+
 async function main() {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
@@ -491,13 +521,21 @@ async function main() {
       try {
         const forceLegacy = true;
         const priorityFee = 0.001;
-    
+        // Choose between "Min", "Low", "Medium", "High", "VeryHigh", "UnsafeMax"
+        let priorityLevel = "Min" 
         // Perform the swap
-        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
-        //console.log("Swap Result:", swapResult);
-    
+        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy);
         // Deserialize the transaction
         const txn = deserializeTransaction(swapResult);
+
+        let feeEstimate = { priorityFeeEstimate: 0 };
+        if (priorityLevel !== "NONE") {
+          feeEstimate = await getPriorityFeeEstimate(keypair, connection, priorityLevel, txn);
+          const computePriceIx = ComputeBudgetProgram.setComputeUnitPrice({
+            microLamports: feeEstimate.priorityFeeEstimate,
+          });
+          txn.add(computePriceIx);
+        }
         if (txn) {
           //console.log("Deserialized Transaction:", txn);
     
