@@ -96,7 +96,7 @@ const SOL_ADDR = "So11111111111111111111111111111111111111112"
 let TOKEN_ADDR = null; // Replace with your target token address
 const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
 const FEES = 0.0003; // Transaction fees
-const SLIPPAGE = 10; // Slippage tolerance percentage
+const SLIPPAGE = 2; // Slippage tolerance percentage
 const RETRY_DELAY = 500; // Delay between retries in milliseconds
 const MAX_RETRIES = 3; // Maximum number of retry attempts
 
@@ -207,7 +207,7 @@ async function getNewTokenId() {
 
       console.log(`Token ID: ${tokenId}, Second uiAmount: ${secondUiAmount}`);
 
-      if (secondUiAmount < 1) {
+      if (secondUiAmount == 0 && !isCoinAlreadyBought(TOKEN_ADDR)) {
         console.log("Found Token to Buy:", tokenId);
         assetLastCheckedIndex = i + 1; // Save the next position to start from
         return tokenId; // Return the token ID
@@ -320,7 +320,7 @@ const getTokenBalance = async (connection, owner, tokenAddr) => {
  * @param {string} priorityFee - Priority fee to include with the transaction.
  * @returns {Promise<object>} - The API response including transaction details.
  */
-async function performSwap(fromToken, toToken, amount, payer, slippage, forceLegacy = true, priorityFee = "5e-7") {
+async function performSwap(fromToken, toToken, amount, payer, slippage, txVersion = "v0", priorityFee = "5e-7") {
   const API_ENDPOINT = "https://swap-v2.solanatracker.io/swap";
   //const API_ENDPOINT = "https://swap-api.solanatracker.io/swap"
   
@@ -332,7 +332,7 @@ async function performSwap(fromToken, toToken, amount, payer, slippage, forceLeg
       fromAmount: amount,
       slippage,
       payer,
-      forceLegacy,
+      txVersion,
       priorityFee
     };
 
@@ -345,7 +345,7 @@ async function performSwap(fromToken, toToken, amount, payer, slippage, forceLeg
 
     // Check for successful response
     if (response.status === 200) {
-      console.log("Swap successful:", response.data);
+      console.log("Swap successful:", toToken);
       return response.data; // Return transaction details
     } else {
       console.error("Swap failed with status:", response.status, response.statusText);
@@ -403,7 +403,7 @@ function deserializeTransaction(responseData) {
  * @param {Connection} connection - Solana connection object.
  * @returns {Promise<string|null>} - The transaction ID or null if sending fails.
  */
-async function sendTransaction(txn, keypair, connection) {
+async function sendTransaction(txn, [keypair], connection) {
   try {
     let txid;
     // Refresh blockhash before each attempt
@@ -411,7 +411,7 @@ async function sendTransaction(txn, keypair, connection) {
       await connection.getLatestBlockhash("confirmed")
     ).blockhash;
 
-    txn.sign(keypair);
+    txn.sign([keypair]);
 
     if (txn instanceof VersionedTransaction) {
       // Sign and send versioned transaction
@@ -488,8 +488,8 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   }
 
   try {
-    const forceLegacy = true;
-    const priorityFee = 0.001;
+    const forceLegacy = "v0";
+    const priorityFee = 0.003;
 
     // Determine swap direction based on action
     const [fromAddr, toAddr, amount] = action === "buy"
@@ -517,7 +517,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
     while (attempt < maxRetries && !confirmed) {
       try {
         // Send the transaction
-        txid = await sendTransaction(txn, keypair, connection);
+        txid = await sendTransaction(txn, [keypair], connection);
         console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
 
         // Poll for transaction confirmation
@@ -734,10 +734,10 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "BMQrMsF3edWWjqQESMiMpfswAHrfeMe3rvJBnaWipump";
-    if (TOKEN_ADDR !== 0 && !isCoinAlreadyBought(TOKEN_ADDR)) {
+    TOKEN_ADDR = "6CwjBEEZ8qgKHi8nVRcVZPXoi3Yw5aaNTTYtgZWdpump";
+    if (TOKEN_ADDR !== 0) {
       try {
-        executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 5);
+        await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 1);
       } catch (error) {
         console.log("Error: handleTransaction handler "+ error)
       }
