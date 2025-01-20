@@ -387,6 +387,41 @@ async function sendTransaction(txn, keypair, connection) {
   }
 }
 
+async function sendPumpTransaction(action, mint, amount, privateKey, web3Connection) {
+  const signerKeyPair = Keypair.fromSecretKey(bs58.decode(privateKey));
+  const signerPublicKey = signerKeyPair.publicKey.toBase58();
+  const response = await fetch(`https://pumpportal.fun/api/trade-local`, {
+      method: "POST",
+      headers: {
+          "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+          publicKey: signerPublicKey,
+          "action": action, // "buy" or "sell"
+          "mint": mint, // contract address of the token you want to trade
+          "denominatedInSol": "true",  // "true" if amount is amount of SOL, "false" if amount is number of tokens
+          "amount": amount, // amount of SOL or tokens
+          "slippage": 15, // percent slippage allowed
+          "priorityFee": 0.0001, // priority fee
+          "pool": "pump"
+      })
+  });
+  if (response.status === 200) { // successfully generated transaction
+      const data = await response.arrayBuffer();
+      const tx = VersionedTransaction.deserialize(new Uint8Array(data));
+      tx.sign([signerKeyPair]);
+      let signature;
+      try {
+          signature = await web3Connection.sendTransaction(tx, { preflightCommitment: "processed" });
+      } catch (e) {
+          console.error(e.message);
+      }
+      console.log("Transaction: https://solscan.io/tx/" + signature);
+  } else {
+      console.log("Transaction failed:", response.statusText);
+  }
+}
+
 async function main() {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
@@ -423,72 +458,12 @@ async function main() {
       pageCounter++;
     }
     // TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "6e4L6gZ3qEZGymNNJ4B5X5KUy5rFG2oQoCrrCmnUpump"
+    TOKEN_ADDR = "BMQrMsF3edWWjqQESMiMpfswAHrfeMe3rvJBnaWipump"
     if (TOKEN_ADDR !== 0) {
       try {
-        const forceLegacy = false;
-        const priorityFee = 0.0001;
-    
-        // Perform the swap
-        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey, SLIPPAGE, forceLegacy, priorityFee);
-        console.log("Swap Result:", swapResult);
-    
-        // Deserialize the transaction
-        const txn = deserializeTransaction(swapResult);
-        if (txn) {
-          console.log("Deserialized Transaction:", txn);
-    
-          const maxRetries = 5; // Max retry attempts
-          const retryInterval = 3000; // 3 seconds between retries
-          let attempt = 0;
-          let confirmed = false;
-    
-          while (attempt < maxRetries && !confirmed) {
-            try {
-              // Refresh blockhash before each attempt
-              const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-              txn.recentBlockhash = blockhash;
-              txn.lastValidBlockHeight = lastValidBlockHeight;
-              txn.feePayer = keypair.publicKey;
-              txn.sign(keypair);
-    
-              // Simulate transaction to ensure it’s still valid
-              const simulationResult = await connection.simulateTransaction(txn);
-              if (simulationResult.value.err) {
-                console.error("Transaction simulation failed before retry:", simulationResult.value.err);
-                break;
-              }
-    
-              console.log("Transaction simulation successful. Attempting to send...");
-    
-              // Send the transaction
-              const txid = await connection.sendRawTransaction(txn.serialize(), { skipPreflight: true });
-              console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
-    
-              // Check for confirmation
-              const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
-              if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
-                console.log("Transaction confirmed:", txid);
-                confirmed = true;
-              } else {
-                console.error("Transaction not confirmed. Retrying...");
-              }
-            } catch (retryError) {
-              console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
-            }
-    
-            attempt++;
-            if (!confirmed) await new Promise(resolve => setTimeout(resolve, retryInterval)); // Wait before retrying
-          }
-    
-          if (!confirmed) {
-            console.error("Transaction failed after maximum retries.");
-          }
-        } else {
-          console.error("Failed to process the transaction.");
-        }
+        sendPumpTransaction("buy", TOKEN_ADDR, 0.001, PRIVKEY, connection);
       } catch (error) {
-        console.error("Error in transaction logic:", error.message);
+        console.log("Transaktion failed: " + error);
       }
     }
     
