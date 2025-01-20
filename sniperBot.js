@@ -786,6 +786,13 @@ async function main() {
     }
     //TOKEN_ADDR = await getNewTokenId();
     TOKEN_ADDR = "6CwjBEEZ8qgKHi8nVRcVZPXoi3Yw5aaNTTYtgZWdpump";
+    let currWalletHolder = await countWalletHolders(TOKEN_ADDR);
+    const message = `Found new Target: ${TOKEN_ADDR}, with ${currWalletHolder} holder.`;
+    try {
+      await sendTelegramMessage(message);
+    } catch (error) {
+      console.log("Error in sending target message" + error);
+    }
     if (TOKEN_ADDR !== 0) {
       try {
         await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 1);
