@@ -515,7 +515,7 @@ async function main() {
               console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
           
               // Poll for transaction confirmation
-              const maxPollTime = 30000; // Maximum time to poll (30 seconds)
+              const maxPollTime = 300000; // Maximum time to poll (300 seconds) / minutes
               const pollInterval = 2000; // Poll every 2 seconds
               let elapsedTime = 0;
           
