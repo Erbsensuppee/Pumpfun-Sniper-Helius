@@ -9,6 +9,7 @@ import {  Connection,
 import bs58 from "bs58";
 import fs from "fs";
 import axios from "axios";
+import fetch from "node-fetch";
 
 // Load private key from credentials file
 let privateKey1;
@@ -18,6 +19,8 @@ let privateKey4;
 let privateKey5;
 let heliusApiKey;
 let solanaTrackerApiKey;
+let telegramApiKey;
+let telegramChatID
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentials.json', 'utf8'));
     privateKey1 = credentials.key1;
@@ -27,6 +30,9 @@ try {
     privateKey5 = credentials.key5;
     heliusApiKey = credentials.heliusApiKey;
     solanaTrackerApiKey = credentials.solanaTrackerApiKey;
+    telegramApiKey = credentials.telegramApiKey;
+    telegramChatID = credentials.telegramChatID;
+
 } catch (error) {
     console.error("Failed to load private key:", error.message);
     process.exit(1);
@@ -38,7 +44,9 @@ const RPC_URLS = [
   "https://api.mainnet-beta.solana.com",
   `https://staked.helius-rpc.com/?api-key=${heliusApiKey}`
 ];
-
+// Telegram configuration
+const TELEGRAM_API_TOKEN = telegramApiKey;
+const TELEGRAM_CHAT_ID = telegramChatID;
 const privateKeyList = [
   privateKey1,
   privateKey2,
@@ -46,6 +54,35 @@ const privateKeyList = [
   privateKey4,
   privateKey5
 ]
+
+// Function to send a message on Telegram
+async function sendTelegramMessage(message) {
+  const url = `https://api.telegram.org/bot${TELEGRAM_API_TOKEN}/sendMessage`;
+  const payload = {
+    chat_id: TELEGRAM_CHAT_ID,
+    text: message,
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!data.ok) {
+      console.error("Failed to send Telegram message:", data.description);
+    } else {
+      console.log("Telegram message sent successfully.");
+    }
+  } catch (error) {
+    console.error("Error sending Telegram message:", error.message);
+  }
+}
+
 function saveCoinsToFile() {
   fs.writeFileSync("boughtCoins.json", JSON.stringify(boughtCoins, null, 2));
   console.log("Bought coins saved to file.");
@@ -602,7 +639,8 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
 
     for (let i = 0; i < privateKeyList.length && i < maxWallets; i++) {
       console.log(`Using Wallet ${i + 1} to perform buy transaction...`);
-      
+      const message = `Using Wallet ${i + 1} to perform buy transaction...`;
+      await sendTelegramMessage(message);
       // Attempt to buy with the current wallet
       await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
 
@@ -611,23 +649,32 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
 
       if ((prevWalletHolder + 1) < actWalletHolder) {
         console.log(`Wallet ${i + 1} buy successful. Selling all wallets used so far...`);
-        
+        const message = `Wallet ${i + 1} buy successful. Selling all wallets used so far...`;
+        await sendTelegramMessage(message);
         // Sell from all previous wallets
         for (let j = i; j >= 0; j--) {
           console.log(`Selling from Wallet ${j + 1}...`);
+          const message = ``;
+          await sendTelegramMessage(message);
           await handleTransaction("sell", tokenAddr, privateKeyList[j], connection);
         }
         return; // Exit function after selling
       } else {
         console.log(`Wallet ${i + 1} buy did not increase holders. Retrying with next wallet...`);
+        const message = `Wallet ${i + 1} buy did not increase holders. Retrying with next wallet...`;
+        await sendTelegramMessage(message);
         prevWalletHolder = actWalletHolder; // Update previous wallet holder count
       }
 
       // If max wallets are reached, sell all wallets used
       if (i === maxWallets - 1) {
         console.log(`Max wallets (${maxWallets}) reached. Selling all wallets...`);
+        const message = `Max wallets (${maxWallets}) reached. Selling all wallets...`;
+        await sendTelegramMessage(message);
         for (let j = i; j >= 0; j--) {
           console.log(`Selling from Wallet ${j + 1}...`);
+          const message = `Selling from Wallet ${j + 1}...`;
+          await sendTelegramMessage(message);
           await handleTransaction("sell", tokenAddr, privateKeyList[j], connection);
         }
         return; // Exit function after selling
@@ -635,8 +682,12 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
     }
 
     console.log(`Buy/Sell cycle complete. Final wallet holders: ${actWalletHolder}`);
+    const message = `Buy/Sell cycle complete. Final wallet holders: ${actWalletHolder}`;
+    await sendTelegramMessage(message);
   } catch (error) {
     console.error("Error in buy/sell cycle:", error.message);
+    const message = `Error in buy/sell cycle: ${error.message}`;
+    await sendTelegramMessage(message);
   }
 }
 
