@@ -25,11 +25,61 @@ try {
     process.exit(1);
 }
 
+function saveBoughtCoins() {
+  fs.writeFileSync("boughtCoins.json", JSON.stringify(boughtCoins, null, 2));
+  console.log("Bought coins saved to file.");
+}
+
+// Store for bought coins
+let boughtCoins = loadBoughtCoins();
+
+function loadBoughtCoins() {
+  if (fs.existsSync("boughtCoins.json")) {
+    const data = fs.readFileSync("boughtCoins.json", "utf8");
+    return JSON.parse(data);
+  }
+  return [];
+}
+
+function sellCoinByAddress(tokenAddress) {
+  const coin = boughtCoins.find(coin => coin.tokenAddress === tokenAddress);
+  if (!coin) {
+    console.log(`Coin with address ${tokenAddress} not found.`);
+    return;
+  }
+
+  console.log(`Selling coin: ${coin.tokenAddress}, TxID: ${coin.txid}`);
+
+  // Perform the sell operation here (e.g., call a sell function)
+  // sellToken(coin.tokenAddress);
+
+  // Update the array to exclude the sold coin
+  const updatedCoins = boughtCoins.filter(coin => coin.tokenAddress !== tokenAddress);
+  boughtCoins.length = 0; // Clear the original array
+  boughtCoins.push(...updatedCoins); // Push updated coins back
+  console.log("Coin removed from list.");
+}
+
+// Function to log a successfully bought coin
+function logBoughtCoin(tokenAddress, txid) {
+  const timestamp = new Date().toISOString();
+  const coin = {
+    tokenAddress,
+    txid,
+    timestamp,
+  };
+
+  boughtCoins.push(coin);
+
+  console.log("Coin logged as bought:", coin);
+}
+
 // RPC URLs
 const RPC_URLS = [
   `https://rpc-mainnet.solanatracker.io/?api_key=${solanaTrackerApiKey}`,
   `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`,
-  "https://api.mainnet-beta.solana.com"
+  "https://api.mainnet-beta.solana.com",
+  `https://staked.helius-rpc.com/?api-key=${heliusApiKey}`
 ];
 
 // Configuration Variables
@@ -370,14 +420,6 @@ async function sendTransaction(txn, keypair, connection) {
 
     txn.sign(keypair);
 
-    // // Simulate transaction
-    // const simulationResult = await connection.simulateTransaction(txn);
-    // if (simulationResult.value.err) {
-    //   console.error("Transaction simulation failed before retry:", simulationResult.value.err);
-    // }
-    // console.log("Transaction simulation successful. Attempting to send...");
-
-    // Check if the transaction is versioned or legacy
     if (txn instanceof VersionedTransaction) {
       // Sign and send versioned transaction
       try {
@@ -409,34 +451,10 @@ async function sendTransaction(txn, keypair, connection) {
   }
 }
 
-const getRecentPrioritizationFees = async () => {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getPriorityFeeEstimate",
-      params: [{
-        "accountKeys": ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"],
-        "options": {
-            "includeAllPriorityFeeLevels": true,
-        }
-      }]
-    }),
-  });
-  const data = await response.json();
-  console.log("Fee: ", data);
-};
-
-
 async function main() {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
-  let solanaTracker = new SolanaTracker(keypair, RPC_URLS[0]);
   let connection = new Connection(RPC_URLS[1], "confirmed");
 
   let rpcIndex = 0;
@@ -467,7 +485,7 @@ async function main() {
       }
       pageCounter++;
     }
-    // TOKEN_ADDR = await getNewTokenId();
+    //TOKEN_ADDR = await getNewTokenId();
     TOKEN_ADDR = "8k81MK4iUH756x3qhbRk72fuCjT731Wny7tVVdxKpump"
     if (TOKEN_ADDR !== 0) {
       try {
@@ -493,44 +511,67 @@ async function main() {
             try {
               // Send the transaction
               txid = await sendTransaction(txn, keypair, connection);
-
+          
               console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
-    
-              // Delay for 30 seconds before checking the transaction status
-              console.log("Waiting 30 seconds before checking confirmation...");
-              await new Promise(resolve => setTimeout(resolve, 30000));
-
-              // Check the transaction status
-              const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
-
-              if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
-                console.log(`Transaction confirmed: ${txid}`);
-              } else if (status?.value?.confirmationStatus === "processed") {
-                console.log(`Transaction is still being processed: ${txid}`);
-              } else {
-                console.error(`Transaction not found or not confirmed: ${txid}`);
+          
+              // Poll for transaction confirmation
+              const maxPollTime = 30000; // Maximum time to poll (30 seconds)
+              const pollInterval = 2000; // Poll every 2 seconds
+              let elapsedTime = 0;
+          
+              console.log("Polling for transaction confirmation...");
+              while (elapsedTime < maxPollTime) {
+                const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
+          
+                if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
+                  console.log(`Transaction confirmed: ${txid}`);
+                  logBoughtCoin(TOKEN_ADDR, txid);
+                  saveBoughtCoins();
+                  confirmed = true;
+                  break;
+                } else if (status?.value?.confirmationStatus === "processed") {
+                  console.log(`Transaction is still being processed: ${txid}`);
+                } else if (status?.value?.err) {
+                  console.error(`Transaction failed with error: ${JSON.stringify(status.value.err)}`);
+          
+                  // Fetch transaction details and logs for debugging
+                  const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
+                  if (transactionDetails?.meta?.logMessages) {
+                    console.error("Transaction Logs:");
+                    transactionDetails.meta.logMessages.forEach(log => console.error(log));
+                  } else {
+                    console.error("No logs available for this transaction.");
+                  }
+          
+                  break; // Exit polling if there's an error
+                } else {
+                  console.log(`Transaction not found or not confirmed yet. TxID: ${txid}`);
+                }
+          
+                // Wait for the next poll
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                elapsedTime += pollInterval;
+              }
+          
+              if (!confirmed) {
+                console.error(`Transaction not confirmed within ${maxPollTime / 1000} seconds: ${txid}`);
+          
+                // Fetch additional details for debugging
+                const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
+                if (transactionDetails) {
+                  console.error("Transaction Details:", transactionDetails);
+                  console.error("Logs:", transactionDetails.meta?.logMessages || "No logs available.");
+                } else {
+                  console.error("Transaction not found on the blockchain.");
+                }
               }
             } catch (retryError) {
               console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
             }
-    
+          
             attempt++;
             await new Promise(resolve => setTimeout(resolve, retryInterval));
             retryInterval *= 1.5; // Increase the interval by 50% after each attempt
-          }
-    
-          if (!confirmed) {
-            console.error("Transaction failed after maximum retries.");
-            if (txid) {
-              console.log("Fetching transaction details for debugging...");
-              const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
-              if (transactionDetails) {
-                console.log("Transaction Details:", transactionDetails);
-                console.log("Logs:", transactionDetails.meta?.logMessages);
-              } else {
-                console.error("Transaction not found on the blockchain.");
-              }
-            }
           }
         } else {
           console.error("Failed to process the transaction.");
