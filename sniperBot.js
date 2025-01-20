@@ -6,10 +6,9 @@ import {  Connection,
           sendAndConfirmTransaction,
           sendAndConfirmRawTransaction          
         } from "@solana/web3.js";
-import { SolanaTracker } from "solana-swap";
-//import { performSwap, SOL_ADDR } from "./lib.js";
 import bs58 from "bs58";
 import fs from "fs";
+import axios from "axios";
 
 // Load private key from credentials file
 let privateKey;
@@ -25,13 +24,13 @@ try {
     process.exit(1);
 }
 
-function saveBoughtCoins() {
+function saveCoinsToFile() {
   fs.writeFileSync("boughtCoins.json", JSON.stringify(boughtCoins, null, 2));
   console.log("Bought coins saved to file.");
 }
 
 // Store for bought coins
-let boughtCoins = loadBoughtCoins();
+const boughtCoins = loadBoughtCoins();
 
 function loadBoughtCoins() {
   if (fs.existsSync("boughtCoins.json")) {
@@ -41,26 +40,19 @@ function loadBoughtCoins() {
   return [];
 }
 
-function sellCoinByAddress(tokenAddress) {
-  const coin = boughtCoins.find(coin => coin.tokenAddress === tokenAddress);
-  if (!coin) {
-    console.log(`Coin with address ${tokenAddress} not found.`);
-    return;
+// Function to remove a coin from the list based on token address
+function removeBoughtCoin(tokenAddress) {
+  const index = boughtCoins.findIndex(coin => coin.tokenAddress === tokenAddress);
+
+  if (index !== -1) {
+    const removedCoin = boughtCoins.splice(index, 1)[0]; // Remove the coin and keep its data
+    console.log("Coin removed from the list:", removedCoin);
+  } else {
+    console.log(`No coin found with token address: ${tokenAddress}`);
   }
-
-  console.log(`Selling coin: ${coin.tokenAddress}, TxID: ${coin.txid}`);
-
-  // Perform the sell operation here (e.g., call a sell function)
-  // sellToken(coin.tokenAddress);
-
-  // Update the array to exclude the sold coin
-  const updatedCoins = boughtCoins.filter(coin => coin.tokenAddress !== tokenAddress);
-  boughtCoins.length = 0; // Clear the original array
-  boughtCoins.push(...updatedCoins); // Push updated coins back
-  console.log("Coin removed from list.");
 }
 
-// Function to log a successfully bought coin
+// Function to log a successfully sold coin
 function logBoughtCoin(tokenAddress, txid) {
   const timestamp = new Date().toISOString();
   const coin = {
@@ -217,11 +209,6 @@ async function getNewTokenId() {
   }
 }
 
-async function buyToken(tokenId) {
-  console.log(`Buying Token ID: ${tokenId} at ${new Date().toISOString()}`);
-  // Add your buy logic here
-}
-
 async function countdownAndWait(ms) {
   let secondsLeft = Math.ceil(ms / 1000);
   while (secondsLeft > 0) {
@@ -233,27 +220,6 @@ async function countdownAndWait(ms) {
   process.stdout.write('\rCountdown complete!                                   \n'); // Clear the countdown line
 }
 
-const swapWithRetry = async (swapFunction, ...args) => {
-  let delay = RETRY_DELAY;
-  console.log(`Buying Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-          const result = await swapFunction(...args);
-          return result;
-      } catch (error) {
-          if (error.response && error.response.status === 429) {
-              console.warn(`Rate limit exceeded. Retrying after ${delay} ms... (Attempt ${attempt} of ${MAX_RETRIES})`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-              delay *= 2; // Exponential backoff
-          } else {
-              throw error;
-          }
-      }
-  }
-
-  throw new Error('Max retries exceeded. Unable to complete swap.');
-};
 
 const getTokenBalance = async (connection, owner, tokenAddr) => {
   const defaultResult = 350000;
@@ -278,43 +244,6 @@ const getTokenBalance = async (connection, owner, tokenAddr) => {
       return defaultResult; // Return default value in case of error
   }
 };
-
-async function swap(tokenIn, tokenOut, solanaTracker, keypair, connection, amount) {
-  console.log(`Buying Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
-  const swapResponse = await solanaTracker.getSwapInstructions(
-    tokenIn, // From Token
-    tokenOut, // To Token
-    amount, // Amount to swap
-    SLIPPAGE, // Slippage
-    keypair.publicKey.toBase58(), // Payer public key
-    FEES, // Priority fee (Recommended while network is congested) => you can adapt to increase / decrease the speed of your transactions
-    false // Force legacy transaction for Jupiter
-  );
-  
-  try {
-      console.log("Send swap transaction...");
-
-      const tx = await performSwap(swapResponse, keypair, connection, amount, tokenIn, {
-          sendOptions: { skipPreflight: true },
-          confirmationRetries: 30,
-          confirmationRetryTimeout: 1000,
-          lastValidBlockHeightBuffer: 150,
-          resendInterval: 1000,
-          confirmationCheckInterval: 1000,
-          skipConfirmationCheck: true
-      });
-      console.log("Transaction ID:", tx);
-      console.log("Transaction URL:", `https://solscan.io/tx/${tx}`);
-      return tx;
-
-  } catch (e) {
-      console.log("Error when trying to swap");
-      throw e;
-  }
-}
-
-import axios from "axios";
-import { connect } from "http2";
 
 /**
  * Perform a swap using Solana Tracker Swap API.
@@ -451,12 +380,159 @@ async function sendTransaction(txn, keypair, connection) {
   }
 }
 
-async function main() {
+/**
+ * Handles a buy or sell transaction for a specified token on the Solana network.
+ *
+ * @param {"buy"|"sell"} action - The action to perform: "buy" to purchase the token, "sell" to liquidate it.
+ * @param {string} TOKEN_ADDR - The address of the token to buy or sell.
+ * @returns {Promise<void>} - Resolves when the transaction process is complete. Logs results or errors.
+ *
+ * @description
+ * This function performs a token transaction on the Solana blockchain. It supports both
+ * "buy" and "sell" actions, dynamically adjusting the source and destination addresses
+ * based on the action. The function includes retry logic, polling for confirmation, and
+ * detailed error handling to ensure robust execution.
+ *
+ * Steps:
+ * 1. Configures transaction parameters based on the `action` ("buy" or "sell").
+ * 2. Initiates a swap using the `performSwap` function.
+ * 3. Deserializes the transaction and attempts to send it to the network.
+ * 4. Implements polling to check the transaction status (processed, confirmed, finalized).
+ * 5. Handles and logs errors such as transaction failure or slippage issues.
+ *
+ * Example Usage:
+ * ```javascript
+ * // Perform a buy transaction
+ * await handleTransaction("buy", "TOKEN_ADDR_HERE");
+ *
+ * // Perform a sell transaction
+ * await handleTransaction("sell", "TOKEN_ADDR_HERE");
+ * ```
+ *
+ * Note:
+ * - The function requires a valid `TOKEN_ADDR` and assumes that `performSwap`, `sendTransaction`,
+ *   and other supporting functions are correctly implemented and available in the scope.
+ */
+async function handleTransaction(action, TOKEN_ADDR) {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
+  let connection = new Connection(RPC_URLS[1], "confirmed");
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
-  let connection = new Connection(RPC_URLS[1], "confirmed");
 
+  if (TOKEN_ADDR === 0) {
+    console.error("Invalid token address.");
+    return;
+  }
+
+  try {
+    const forceLegacy = true;
+    const priorityFee = 0.001;
+
+    // Determine swap direction based on action
+    const [fromAddr, toAddr, amount] = action === "buy"
+      ? [SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT] // Buy logic
+      : [TOKEN_ADDR, SOL_ADDR, "100%"];       // Sell logic
+
+    console.log(`Performing ${action.toUpperCase()} for token: ${TOKEN_ADDR}`);
+
+    // Perform the swap
+    const swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
+
+    // Deserialize the transaction
+    const txn = deserializeTransaction(swapResult);
+    if (!txn) {
+      console.error("Failed to deserialize transaction.");
+      return;
+    }
+
+    const maxRetries = 1; // Max retry attempts
+    let retryInterval = 2000; // Start with 2 seconds
+    let attempt = 0;
+    let confirmed = false;
+    let txid = null;
+
+    while (attempt < maxRetries && !confirmed) {
+      try {
+        // Send the transaction
+        txid = await sendTransaction(txn, keypair, connection);
+        console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
+
+        // Poll for transaction confirmation
+        const maxPollTime = 300000; // 300 seconds (5 minutes)
+        const pollInterval = 2000; // Poll every 2 seconds
+        let elapsedTime = 0;
+
+        console.log("Polling for transaction confirmation...");
+        while (elapsedTime < maxPollTime) {
+          const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
+
+          if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
+            console.log(`Transaction confirmed: ${txid}`);
+            switch (action) {
+              case "buy":
+                logBoughtCoin(TOKEN_ADDR, txid);
+                break;
+              case "sell":
+                removeBoughtCoin(TOKEN_ADDR);
+                break;
+              default:
+                console.log("Unknown action in handleTransaction")
+                break;
+            }
+            saveCoinsToFile();
+            confirmed = true;
+            break;
+          } else if (status?.value?.confirmationStatus === "processed") {
+            console.log(`Transaction is still being processed: ${txid}`);
+          } else if (status?.value?.err) {
+            console.error(`Transaction failed with error: ${JSON.stringify(status.value.err)}`);
+
+            // Fetch transaction details and logs for debugging
+            const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
+            if (transactionDetails?.meta?.logMessages) {
+              console.error("Transaction Logs:");
+              transactionDetails.meta.logMessages.forEach(log => console.error(log));
+            } else {
+              console.error("No logs available for this transaction.");
+            }
+
+            break; // Exit polling if there's an error
+          } else {
+            console.log(`Transaction not found or not confirmed yet. TxID: ${txid}`);
+          }
+
+          // Wait for the next poll
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          elapsedTime += pollInterval;
+        }
+
+        if (!confirmed) {
+          console.error(`Transaction not confirmed within ${maxPollTime / 1000} seconds: ${txid}`);
+
+          // Fetch additional details for debugging
+          const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
+          if (transactionDetails) {
+            console.error("Transaction Details:", transactionDetails);
+            console.error("Logs:", transactionDetails.meta?.logMessages || "No logs available.");
+          } else {
+            console.error("Transaction not found on the blockchain.");
+          }
+        }
+      } catch (retryError) {
+        console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
+      }
+
+      attempt++;
+      await new Promise(resolve => setTimeout(resolve, retryInterval));
+      retryInterval *= 1.5; // Increase the interval by 50% after each attempt
+    }
+  } catch (error) {
+    console.error(`Error during ${action} transaction:`, error.message);
+  }
+}
+
+
+async function main() {
   let rpcIndex = 0;
   while (true) {
     let nextTime;
@@ -486,98 +562,12 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "8k81MK4iUH756x3qhbRk72fuCjT731Wny7tVVdxKpump"
+    TOKEN_ADDR = "8k81MK4iUH756x3qhbRk72fuCjT731Wny7tVVdxKpump";
     if (TOKEN_ADDR !== 0) {
       try {
-        const forceLegacy = true;
-        const priorityFee = 0.001;
-    
-        // Perform the swap
-        const swapResult = await performSwap(SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
-        //console.log("Swap Result:", swapResult);
-    
-        // Deserialize the transaction
-        const txn = deserializeTransaction(swapResult);
-        if (txn) {
-          //console.log("Deserialized Transaction:", txn);
-    
-          const maxRetries = 1; // Max retry attempts
-          let retryInterval = 2000; // Start with 2 seconds
-          let attempt = 0;
-          let confirmed = false;
-          let txid = null;
-    
-          while (attempt < maxRetries && !confirmed) {
-            try {
-              // Send the transaction
-              txid = await sendTransaction(txn, keypair, connection);
-          
-              console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
-          
-              // Poll for transaction confirmation
-              const maxPollTime = 300000; // Maximum time to poll (300 seconds) / minutes
-              const pollInterval = 2000; // Poll every 2 seconds
-              let elapsedTime = 0;
-          
-              console.log("Polling for transaction confirmation...");
-              while (elapsedTime < maxPollTime) {
-                const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
-          
-                if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
-                  console.log(`Transaction confirmed: ${txid}`);
-                  logBoughtCoin(TOKEN_ADDR, txid);
-                  saveBoughtCoins();
-                  confirmed = true;
-                  break;
-                } else if (status?.value?.confirmationStatus === "processed") {
-                  console.log(`Transaction is still being processed: ${txid}`);
-                } else if (status?.value?.err) {
-                  console.error(`Transaction failed with error: ${JSON.stringify(status.value.err)}`);
-          
-                  // Fetch transaction details and logs for debugging
-                  const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
-                  if (transactionDetails?.meta?.logMessages) {
-                    console.error("Transaction Logs:");
-                    transactionDetails.meta.logMessages.forEach(log => console.error(log));
-                  } else {
-                    console.error("No logs available for this transaction.");
-                  }
-          
-                  break; // Exit polling if there's an error
-                } else {
-                  console.log(`Transaction not found or not confirmed yet. TxID: ${txid}`);
-                }
-          
-                // Wait for the next poll
-                await new Promise(resolve => setTimeout(resolve, pollInterval));
-                elapsedTime += pollInterval;
-              }
-          
-              if (!confirmed) {
-                console.error(`Transaction not confirmed within ${maxPollTime / 1000} seconds: ${txid}`);
-          
-                // Fetch additional details for debugging
-                const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
-                if (transactionDetails) {
-                  console.error("Transaction Details:", transactionDetails);
-                  console.error("Logs:", transactionDetails.meta?.logMessages || "No logs available.");
-                } else {
-                  console.error("Transaction not found on the blockchain.");
-                }
-              }
-            } catch (retryError) {
-              console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
-            }
-          
-            attempt++;
-            await new Promise(resolve => setTimeout(resolve, retryInterval));
-            retryInterval *= 1.5; // Increase the interval by 50% after each attempt
-          }
-        } else {
-          console.error("Failed to process the transaction.");
-        }
+        await handleTransaction("sell", TOKEN_ADDR);
       } catch (error) {
-        console.error("Error in transaction logic:", error.message);
+        console.log("Error: handleTransaction handler "+ error)
       }
     }
   }
