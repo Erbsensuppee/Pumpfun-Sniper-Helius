@@ -8,8 +8,8 @@ import {  Connection,
         } from "@solana/web3.js";
 import bs58 from "bs58";
 import fs from "fs";
-import axios from "axios";
 import fetch from "node-fetch";
+import { performSwap } from "./src/performSwap.js"
 
 // Load private key from credentials file
 let privateKey1;
@@ -17,6 +17,9 @@ let privateKey2;
 let privateKey3;
 let privateKey4;
 let privateKey5;
+let privateKey6;
+let privateKey7;
+let privateKey8;
 let heliusApiKey;
 let solanaTrackerApiKey;
 let telegramApiKey;
@@ -28,6 +31,9 @@ try {
     privateKey3 = credentials.key3;
     privateKey4 = credentials.key4;
     privateKey5 = credentials.key5;
+    privateKey6 = credentials.key6;
+    privateKey7 = credentials.key7;
+    privateKey8 = credentials.key8;
     heliusApiKey = credentials.heliusApiKey;
     solanaTrackerApiKey = credentials.solanaTrackerApiKey;
     telegramApiKey = credentials.telegramApiKey;
@@ -52,7 +58,10 @@ const privateKeyList = [
   privateKey2,
   privateKey3,
   privateKey4,
-  privateKey5
+  privateKey5,
+  privateKey6,
+  privateKey7,
+  privateKey8
 ]
 
 // Function to send a message on Telegram
@@ -93,9 +102,9 @@ const boughtCoins = loadBoughtCoins();
 const allBoughtCoinsID = loadBoughtCoinsID();
 console.log("Bought Coins:", allBoughtCoinsID);
 
-function loadBoughtCoins() {
-  if (fs.existsSync("boughtCoins.json")) {
-    const data = fs.readFileSync("boughtCoins.json", "utf8");
+function loadBoughtCoins(filePath = "boughtCoins.json") {
+  if (fs.existsSync(filePath)) {
+    const data = fs.readFileSync(filePath, "utf8");
     return JSON.parse(data);
   }
   return [];
@@ -131,9 +140,9 @@ function logBoughtCoin(tokenAddress, txid) {
 const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
 let TOKEN_ADDR = null; // Replace with your target token address
-const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 1; // Amount of SOL to use for each purchase
 const FEES = 0.0003; // Transaction fees
-const SLIPPAGE = 2; // Slippage tolerance percentage
+const SLIPPAGE = 10; // Slippage tolerance percentage
 const RETRY_DELAY = 500; // Delay between retries in milliseconds
 const MAX_RETRIES = 3; // Maximum number of retry attempts
 
@@ -244,7 +253,7 @@ async function getNewTokenId() {
 
       console.log(`Token ID: ${tokenId}, Second uiAmount: ${secondUiAmount}`);
 
-      if (secondUiAmount == 0 && !isCoinAlreadyBought(TOKEN_ADDR)) {
+      if (secondUiAmount == 0 && !isCoinAlreadyBought(tokenId)) {
         console.log("Found Token to Buy:", tokenId);
         assetLastCheckedIndex = i + 1; // Save the next position to start from
         return tokenId; // Return the token ID
@@ -347,58 +356,6 @@ const getTokenBalance = async (connection, owner, tokenAddr) => {
 };
 
 /**
- * Perform a swap using Solana Tracker Swap API.
- * @param {string} fromToken - The mint address of the token you are swapping from (e.g., SOL).
- * @param {string} toToken - The mint address of the token you are swapping to.
- * @param {number} amount - The amount of the `fromToken` to swap.
- * @param {string} payer - The Base58 encoded public key of the payer's wallet.
- * @param {string} slippage - Slippage tolerance in percentage (e.g., 0.5 for 0.5%).
- * @param {boolean} forceLegacy - Whether to force legacy transaction format.
- * @param {string} priorityFee - Priority fee to include with the transaction.
- * @returns {Promise<object>} - The API response including transaction details.
- */
-async function performSwap(fromToken, toToken, amount, payer, slippage, txVersion = "v0", priorityFee = "5e-7") {
-  const API_ENDPOINT = "https://swap-v2.solanatracker.io/swap";
-  //const API_ENDPOINT = "https://swap-api.solanatracker.io/swap"
-  
-  try {
-    // Build the payload
-    const payload = {
-      from: fromToken,
-      to: toToken,
-      fromAmount: amount,
-      slippage,
-      payer,
-      txVersion,
-      priorityFee
-    };
-
-    // Send the request to the Swap API
-    const response = await axios.post(API_ENDPOINT, payload, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-
-    // Check for successful response
-    if (response.status === 200) {
-      console.log("Swap successful:", toToken);
-      return response.data; // Return transaction details
-    } else {
-      console.error("Swap failed with status:", response.status, response.statusText);
-      return null;
-    }
-  } catch (error) {
-    console.error("Error performing swap:", error.message);
-    if (error.response) {
-      console.error("Response status:", error.response.status);
-      console.error("Response data:", error.response.data);
-    }
-    throw error;
-  }
-}
-
-/**
  * Processes a transaction response and deserializes it.
  * @param {object} responseData - The API response containing transaction details.
  * @returns {Transaction|VersionedTransaction|null} - The deserialized transaction object or null if deserialization fails.
@@ -433,6 +390,11 @@ function deserializeTransaction(responseData) {
   }
 }
 
+// Utility function to add a delay
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Sends a Solana transaction to the network.
  * @param {Transaction|VersionedTransaction} txn - The deserialized transaction to send.
@@ -453,7 +415,7 @@ async function sendTransaction(txn, [keypair], connection) {
     if (txn instanceof VersionedTransaction) {
       // Sign and send versioned transaction
       try {
-        console.log(`Buying Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
+        console.log(`sendTransactrion Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
         txid = await connection.sendRawTransaction(txn.serialize(), {
           skipPreflight: false,
         });       
@@ -464,7 +426,7 @@ async function sendTransaction(txn, [keypair], connection) {
       // Sign and send legacy transaction
       try {
         const rawTransaction = txn.serialize();
-        console.log(`Buying Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
+        console.log(`sendTransaction Token ID: ${TOKEN_ADDR} at ${new Date().toISOString()}`);
         txid = await connection.sendRawTransaction(rawTransaction, {
           skipPreflight: false,
         });
@@ -518,6 +480,9 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
+  let swapResult;
+  let transaction;
+  let txid;
 
   if (TOKEN_ADDR === 0) {
     console.error("Invalid token address.");
@@ -525,8 +490,8 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   }
 
   try {
-    const forceLegacy = "v0";
-    const priorityFee = 0.003;
+    const forceLegacy = "legacy";
+    const priorityFee = 0.002;
 
     // Determine swap direction based on action
     const [fromAddr, toAddr, amount] = action === "buy"
@@ -536,103 +501,69 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
     console.log(`Performing ${action.toUpperCase()} for token: ${TOKEN_ADDR}`);
 
     // Perform the swap
-    const swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
+    try {
+      swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
+    } catch (error) {
+      console.error("Error performing swap:", error.message);
+      //blacklist TheCoin
+      storeBoughtCoin(TOKEN_ADDR);
+      return; // Exit the function on error
+    }
 
     // Deserialize the transaction
-    const txn = deserializeTransaction(swapResult);
-    if (!txn) {
+    try{
+      transaction = deserializeTransaction(swapResult);
+    }catch (error) {
       console.error("Failed to deserialize transaction.");
       return;
     }
 
-    const maxRetries = 1; // Max retry attempts
-    let retryInterval = 2000; // Start with 2 seconds
-    let attempt = 0;
-    let confirmed = false;
-    let txid = null;
-
-    while (attempt < maxRetries && !confirmed) {
-      try {
-        // Send the transaction
-        txid = await sendTransaction(txn, [keypair], connection);
-        console.log(`Transaction sent. Attempt ${attempt + 1}: ${txid}`);
-
-        // Poll for transaction confirmation
-        const maxPollTime = 300000; // 300 seconds (5 minutes)
-        const pollInterval = 2000; // Poll every 2 seconds
-        let elapsedTime = 0;
-
-        console.log("Polling for transaction confirmation...");
-        while (elapsedTime < maxPollTime) {
-          const status = await connection.getSignatureStatus(txid, { searchTransactionHistory: true });
-
-          if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
-            console.log(`Transaction confirmed: ${txid}`);
-            switch (action) {
-              case "buy":
-                logBoughtCoin(TOKEN_ADDR, txid);
-                storeBoughtCoin(TOKEN_ADDR);
-                break;
-              case "sell":
-                removeBoughtCoin(TOKEN_ADDR);
-                break;
-              default:
-                console.log("Unknown action in handleTransaction")
-                break;
-            }
-            saveCoinsToFile();
-            confirmed = true;
-            break;
-          } else if (status?.value?.confirmationStatus === "processed") {
-            console.log(`Transaction is still being processed: ${txid}`);
-          } else if (status?.value?.err) {
-            console.error(`Transaction failed with error: ${JSON.stringify(status.value.err)}`);
-
-            // Fetch transaction details and logs for debugging
-            const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
-            if (transactionDetails?.meta?.logMessages) {
-              console.error("Transaction Logs:");
-              transactionDetails.meta.logMessages.forEach(log => console.error(log));
-            } else {
-              console.error("No logs available for this transaction.");
-            }
-
-            break; // Exit polling if there's an error
-          } else {
-            console.log(`Transaction not found or not confirmed yet. TxID: ${txid}`);
-          }
-
-          // Wait for the next poll
-          await new Promise(resolve => setTimeout(resolve, pollInterval));
-          elapsedTime += pollInterval;
-        }
-
-        if (!confirmed) {
-          console.error(`Transaction not confirmed within ${maxPollTime / 1000} seconds: ${txid}`);
-
-          // Fetch additional details for debugging
-          const transactionDetails = await connection.getTransaction(txid, { commitment: "confirmed" });
-          if (transactionDetails) {
-            console.error("Transaction Details:", transactionDetails);
-            console.error("Logs:", transactionDetails.meta?.logMessages || "No logs available.");
-          } else {
-            console.error("Transaction not found on the blockchain.");
-          }
-        }
-      } catch (retryError) {
-        console.error(`Error on attempt ${attempt + 1}:`, retryError.message);
-      }
-
-      attempt++;
-      await new Promise(resolve => setTimeout(resolve, retryInterval));
-      retryInterval *= 1.5; // Increase the interval by 50% after each attempt
+    // get latest blockHash
+    try {
+      transaction.recentBlockhash = (
+        await connection.getLatestBlockhash("confirmed")
+      ).blockhash;
+    } catch (error) {
+      console.error("Error fetching latest blockhash:", error.message);
+      return;
     }
+
+    //sign the transaction
+    transaction.sign(keypair);
+    
+    // Send Transaction
+    // Send and confirm the transaction
+    try {
+      const txid = await sendAndConfirmTransaction(connection, transaction, [keypair],{
+        skipPreflight: false,
+        commitment: "confirmed",
+      });
+      console.log(`Transaction sent successfully with signature ${txid}`);
+    } catch (e) {
+      console.error(`Failed to send transaction: ${e}`);
+    }
+
+    switch (action) {
+      case "buy":
+        logBoughtCoin(TOKEN_ADDR, txid);
+        //Blacklist
+        storeBoughtCoin(TOKEN_ADDR);
+        break;
+      case "sell":
+        removeBoughtCoin(TOKEN_ADDR);
+        break;
+      default:
+        console.log("Unknown action in handleTransaction")
+        break;
+    }
+    saveCoinsToFile();
   } catch (error) {
     console.error(`Error during ${action} transaction:`, error.message);
+    return;
   }
 }
 
-async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWallets = 5) {
+async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWallets) {
   try {
     let prevWalletHolder = await countWalletHolders(tokenAddr);
     let actWalletHolder;
@@ -643,6 +574,7 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
       await sendTelegramMessage(message);
       // Attempt to buy with the current wallet
       await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
+
 
       // Recalculate wallet holders
       actWalletHolder = await countWalletHolders(tokenAddr);
@@ -677,6 +609,8 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
           await sendTelegramMessage(message);
           await handleTransaction("sell", tokenAddr, privateKeyList[j], connection);
         }
+        console.log(`Max wallets (${maxWallets}) reached. Selling all wallets. [done]`);
+        delay(5000);
         return; // Exit function after selling
       }
     }
@@ -688,6 +622,7 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
     console.error("Error in buy/sell cycle:", error.message);
     const message = `Error in buy/sell cycle: ${error.message}`;
     await sendTelegramMessage(message);
+    return;
   }
 }
 
@@ -785,9 +720,9 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "6CwjBEEZ8qgKHi8nVRcVZPXoi3Yw5aaNTTYtgZWdpump";
+    TOKEN_ADDR = "EibT8Ddj8sZ7V8eGM4MzR5FG9QpuW2sTKoffgg4Xpump";
     let currWalletHolder = await countWalletHolders(TOKEN_ADDR);
-    const message = `Found new Target: \`${TOKEN_ADDR}\`, with ${currWalletHolder} holder.`;
+    const message = `Found new Target: ${TOKEN_ADDR}\ with ${currWalletHolder} holder.`;
     try {
       await sendTelegramMessage(message);
     } catch (error) {
