@@ -43,6 +43,30 @@ try {
     console.error("Failed to load private key:", error.message);
     process.exit(1);
 }
+
+// Configuration Variables
+const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
+const SOL_ADDR = "So11111111111111111111111111111111111111112"
+let TOKEN_ADDR = null; // Replace with your target token address
+const SOL_BUY_AMOUNT = 1; // Amount of SOL to use for each purchase
+const FEES = 0.0003; // Transaction fees
+const SLIPPAGE = 10; // Slippage tolerance percentage
+const RETRY_DELAY = 500; // Delay between retries in milliseconds
+const MAX_RETRIES = 3; // Maximum number of retry attempts
+
+const url = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
+
+let assetDatabase = null;
+let pageCounter = 1;
+let pageLimit = 1000;
+let assetLastCheckedIndex = 0;
+let startSolBalance;
+let endSolBalance;
+let resultSolBalance;
+
+// Switch between 'hour' and 'minute'
+let mode = 'minute'; // Change to 'hour' for hourly buys
+
 // RPC URLs
 const RPC_URLS = [
   `https://rpc-mainnet.solanatracker.io/?api_key=${solanaTrackerApiKey}`,
@@ -82,11 +106,6 @@ async function sendTelegramMessage(message) {
     });
 
     const data = await response.json();
-    if (!data.ok) {
-      console.error("Failed to send Telegram message:", data.description);
-    } else {
-      console.log("Telegram message sent successfully.");
-    }
   } catch (error) {
     console.error("Error sending Telegram message:", error.message);
   }
@@ -100,7 +119,7 @@ function saveCoinsToFile() {
 // Store for bought coins
 const boughtCoins = loadBoughtCoins();
 const allBoughtCoinsID = loadBoughtCoinsID();
-console.log("Bought Coins:", allBoughtCoinsID);
+//console.log("Bought Coins:", allBoughtCoinsID);
 
 function loadBoughtCoins(filePath = "boughtCoins.json") {
   if (fs.existsSync(filePath)) {
@@ -108,6 +127,38 @@ function loadBoughtCoins(filePath = "boughtCoins.json") {
     return JSON.parse(data);
   }
   return [];
+}
+
+/**
+ * Calculate the total amount of SOL across multiple wallets.
+ * @param {string[]} privateKeyList - Array of private keys in Base58 encoding.
+ * @returns {Promise<number>} - Total SOL balance across all wallets.
+ */
+async function getTotalSolBalance(privateKeyList) {
+  if (!Array.isArray(privateKeyList) || privateKeyList.length === 0) {
+    console.error("Invalid privateKeyList: Must contain at least one private key.");
+    return 0;
+  }
+
+  let totalSol = 0;
+
+  for (const privateKey of privateKeyList) {
+    try {
+      const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
+      const publicKey = keypair.publicKey;
+      
+      console.log(`Fetching balance for wallet: ${publicKey.toBase58()}`);
+      const balance = await connection.getBalance(publicKey);
+
+      console.log(`Wallet: ${publicKey.toBase58()} - Balance: ${balance / 1e9} SOL`);
+      totalSol += balance / 1e9; // Convert lamports to SOL
+    } catch (error) {
+      console.error(`Error fetching balance for a wallet: ${error.message}`);
+    }
+  }
+
+  console.log(`Total SOL balance across all wallets: ${totalSol} SOL`);
+  return totalSol;
 }
 
 // Function to remove a coin from the list based on token address
@@ -135,26 +186,6 @@ function logBoughtCoin(tokenAddress, txid) {
 
   console.log("Coin logged as bought:", coin);
 }
-
-// Configuration Variables
-const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
-const SOL_ADDR = "So11111111111111111111111111111111111111112"
-let TOKEN_ADDR = null; // Replace with your target token address
-const SOL_BUY_AMOUNT = 1; // Amount of SOL to use for each purchase
-const FEES = 0.0003; // Transaction fees
-const SLIPPAGE = 10; // Slippage tolerance percentage
-const RETRY_DELAY = 500; // Delay between retries in milliseconds
-const MAX_RETRIES = 3; // Maximum number of retry attempts
-
-const url = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
-
-let assetDatabase = null;
-let pageCounter = 1;
-let pageLimit = 1000;
-let assetLastCheckedIndex = 0;
-
-// Switch between 'hour' and 'minute'
-let mode = 'minute'; // Change to 'hour' for hourly buys
 
 // Utility function to pause execution for the specified duration
 function sleep(ms) {
@@ -478,7 +509,6 @@ async function sendTransaction(txn, [keypair], connection) {
  */
 async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
-  console.log("Keypair initialized successfully.");
   console.log("Public Key:", keypair.publicKey.toBase58());
   let swapResult;
   let transaction;
@@ -536,7 +566,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
     try {
       const txid = await sendAndConfirmTransaction(connection, transaction, [keypair],{
         skipPreflight: false,
-        commitment: "confirmed",
+        commitment: "finalized",
       });
       console.log(`Transaction sent successfully with signature ${txid}`);
     } catch (e) {
@@ -710,6 +740,8 @@ async function main() {
     // Wait until the next full hour or minute
     await countdownAndWait(nextTime);
 
+    startSolBalance = await getTotalSolBalance(privateKeyList);
+
     // Fetch a new dataset if needed
     if (!assetDatabase || assetLastCheckedIndex >= assetDatabase.result.items.length) {
       const fetched = await getAssetsByAuthority();
@@ -735,6 +767,11 @@ async function main() {
         console.log("Error: handleTransaction handler "+ error)
       }
     }
+    endSolBalance = getTotalSolBalance(privateKeyList);
+    console.log(`Starting SOL Balance: ${startSolBalance} SOL`);
+    console.log(`Ending SOL Balance: ${endSolBalance} SOL`);
+    const pnl = endSolBalance - startSolBalance;
+    console.log(`PnL: ${pnl} SOL`);
   }
 }
 
