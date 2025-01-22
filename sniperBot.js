@@ -9,9 +9,11 @@ import {  Connection,
 import bs58 from "bs58";
 import fs from "fs";
 import fetch from "node-fetch";
-import { performSwap } from "./src/performSwap.js"
+import { swap } from "./src/performSwapV2.js"
 
+//
 // Load private key from credentials file
+//
 let privateKey1;
 let privateKey2;
 let privateKey3;
@@ -44,16 +46,15 @@ try {
     process.exit(1);
 }
 
+//
 // Configuration Variables
-const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your preferred RPC endpoint
+//
+const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`; // Replace with your preferred RPC endpoint
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-let TOKEN_ADDR = null; // Replace with your target token address
-const SOL_BUY_AMOUNT = 1; // Amount of SOL to use for each purchase
-const FEES = 0.003; // Transaction fees
-const SLIPPAGE = 10; // Slippage tolerance percentage
-
-const url = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
-
+let TOKEN_ADDR = "B2cQ69uWhC3sLz99FbFvnMivdEBJobgaPj7YtETVpump"; // Replace with your target token address
+const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
+const SLIPPAGE = 50; // 0,5%
+const maxRetries = 5;
 let assetDatabase = null;
 let pageCounter = 1;
 let pageLimit = 1000;
@@ -205,9 +206,9 @@ async function fetchMetadata(uri) {
   }
 }
 
-async function getAssetsByAuthority() {
+async function getAssetsByAuthority(RPC_URL) {
   console.log(`Fetching assets for page ${pageCounter}...`);
-  const response = await fetch(url, {
+  const response = await fetch(RPC_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -306,11 +307,11 @@ async function getNewTokenId() {
 
  * @returns {Promise<number>} - The count of wallets with `uiAmount > 0`.
  */
-async function countWalletHolders(tokenId) {
+async function countWalletHolders(tokenId, RPC_URL) {
   try {
     console.log("Checking Token ID: ", tokenId);
 
-    const response = await fetch(url, {
+    const response = await fetch(RPC_URL, {
       method: 'POST',
       headers: {
         "Content-Type": "application/json",
@@ -508,8 +509,6 @@ async function sendTransaction(txn, [keypair], connection) {
 async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   const keypair = Keypair.fromSecretKey(bs58.decode(privateKey));
   console.log("Public Key:", keypair.publicKey.toBase58());
-  let swapResult;
-  let transaction;
   let txid;
 
   if (TOKEN_ADDR === 0) {
@@ -518,61 +517,33 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
   }
 
   try {
-    const forceLegacy = "legacy";
-    const priorityFee = 0.002;
-
     // Determine swap direction based on action
-    const [fromAddr, toAddr, amount] = action === "buy"
+    const [inputMint, outputMint, amount] = action === "buy"
       ? [SOL_ADDR, TOKEN_ADDR, SOL_BUY_AMOUNT] // Buy logic
       : [TOKEN_ADDR, SOL_ADDR, "100%"];       // Sell logic
 
-    console.log(`Performing ${action.toUpperCase()} for token: ${TOKEN_ADDR}`);
-
+    console.log("\n🚀 Starting swap operation...");
+    console.log(`Input: ${inputMint} SOL`);
+    console.log(`Output: ${outputMint}`);
+    console.log(`Initial Slippage: ${SLIPPAGE / 100}%`);
     // Perform the swap
     try {
-      swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, FEES);
+      txid = await swap(
+        inputMint,
+        outputMint,
+        amount,
+        SLIPPAGE,
+        maxRetries,
+        privateKey,
+        connection
+      );
     } catch (error) {
       console.error("Error performing swap:", error.message);
       //blacklist TheCoin
       storeBoughtCoin(TOKEN_ADDR);
-      return; // Exit the function on error
+      return { success: false, txid }
     }
-
-    // Deserialize the transaction
-    try{
-      transaction = deserializeTransaction(swapResult);
-    }catch (error) {
-      console.error("Failed to deserialize transaction.");
-      return;
-    }
-
-    // get latest blockHash
-    try {
-      transaction.recentBlockhash = (
-        await connection.getLatestBlockhash("finalized")
-      ).blockhash;
-    } catch (error) {
-      console.error("Error fetching latest blockhash:", error.message);
-      return;
-    }
-
-    //sign the transaction
-    transaction.sign(keypair);
     
-    // Send Transaction
-    // Send and confirm the transaction
-    try {
-      const txid = await sendAndConfirmTransaction(connection, transaction, [keypair],{
-        skipPreflight: false,
-        commitment: "finalized",
-      });
-      console.log(`Transaction sent successfully with signature ${txid}`);
-    } catch (error) {
-      console.error("Transaction Logs:", error.logs);
-      console.error(`Failed to send transaction: ${error}`);
-      return { success: false, error: error };
-    }
-
     switch (action) {
       case "buy":
         logBoughtCoin(TOKEN_ADDR, txid);
@@ -596,7 +567,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
 
 async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWallets) {
   try {
-    let prevWalletHolder = await countWalletHolders(tokenAddr);
+    let prevWalletHolder = await countWalletHolders(tokenAddr, RPC_URL);
     let actWalletHolder;
 
     for (let i = 0; i < privateKeyList.length && i < maxWallets; i++) {
@@ -607,7 +578,7 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
       const transactionResult = await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
 
       // Recalculate wallet holders
-      actWalletHolder = await countWalletHolders(tokenAddr);
+      actWalletHolder = await countWalletHolders(tokenAddr, RPC_URL);
 
       if (!transactionResult.success || (prevWalletHolder + 1) < actWalletHolder) {
         console.log(`Wallet ${i + 1} buy successful. Selling all wallets used so far...`);
@@ -740,11 +711,11 @@ async function main() {
     // Wait until the next full hour or minute
     await countdownAndWait(nextTime);
 
-    startSolBalance = await getTotalSolBalance(connection, privateKeyList);
+    //startSolBalance = await getTotalSolBalance(connection, privateKeyList);
 
     // Fetch a new dataset if needed
     if (!assetDatabase || assetLastCheckedIndex >= assetDatabase.result.items.length) {
-      const fetched = await getAssetsByAuthority();
+      const fetched = await getAssetsByAuthority(RPC_URL);
       if (!fetched) {
         console.log("No more assets to process. Stopping.");
         break;
@@ -752,8 +723,7 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "B2cQ69uWhC3sLz99FbFvnMivdEBJobgaPj7YtETVpump";
-    let currWalletHolder = await countWalletHolders(TOKEN_ADDR);
+    let currWalletHolder = await countWalletHolders(TOKEN_ADDR, RPC_URL);
     const message = `Found new Target: ${TOKEN_ADDR}\ with ${currWalletHolder} holder.`;
     try {
       await sendTelegramMessage(message);
@@ -762,16 +732,16 @@ async function main() {
     }
     if (TOKEN_ADDR !== 0) {
       try {
-        await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 8);
+        await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 1);
       } catch (error) {
         console.log("Error: handleTransaction handler "+ error)
       }
     }
-    endSolBalance = getTotalSolBalance(privateKeyList);
-    console.log(`Starting SOL Balance: ${startSolBalance} SOL`);
-    console.log(`Ending SOL Balance: ${endSolBalance} SOL`);
-    const pnl = endSolBalance - startSolBalance;
-    console.log(`PnL: ${pnl} SOL`);
+    // endSolBalance = getTotalSolBalance(privateKeyList);
+    // console.log(`Starting SOL Balance: ${startSolBalance} SOL`);
+    // console.log(`Ending SOL Balance: ${endSolBalance} SOL`);
+    // const pnl = endSolBalance - startSolBalance;
+    // console.log(`PnL: ${pnl} SOL`);
   }
 }
 
