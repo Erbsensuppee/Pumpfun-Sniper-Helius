@@ -49,10 +49,8 @@ const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your pref
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
 let TOKEN_ADDR = null; // Replace with your target token address
 const SOL_BUY_AMOUNT = 1; // Amount of SOL to use for each purchase
-const FEES = 0.0003; // Transaction fees
+const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 10; // Slippage tolerance percentage
-const RETRY_DELAY = 500; // Delay between retries in milliseconds
-const MAX_RETRIES = 3; // Maximum number of retry attempts
 
 const url = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
 
@@ -134,7 +132,7 @@ function loadBoughtCoins(filePath = "boughtCoins.json") {
  * @param {string[]} privateKeyList - Array of private keys in Base58 encoding.
  * @returns {Promise<number>} - Total SOL balance across all wallets.
  */
-async function getTotalSolBalance(privateKeyList) {
+async function getTotalSolBalance(connection, privateKeyList) {
   if (!Array.isArray(privateKeyList) || privateKeyList.length === 0) {
     console.error("Invalid privateKeyList: Must contain at least one private key.");
     return 0;
@@ -532,7 +530,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
 
     // Perform the swap
     try {
-      swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, priorityFee);
+      swapResult = await performSwap(fromAddr, toAddr, amount, keypair.publicKey.toBase58(), SLIPPAGE, forceLegacy, FEES);
     } catch (error) {
       console.error("Error performing swap:", error.message);
       //blacklist TheCoin
@@ -551,7 +549,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
     // get latest blockHash
     try {
       transaction.recentBlockhash = (
-        await connection.getLatestBlockhash("confirmed")
+        await connection.getLatestBlockhash("finalized")
       ).blockhash;
     } catch (error) {
       console.error("Error fetching latest blockhash:", error.message);
@@ -569,8 +567,10 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
         commitment: "finalized",
       });
       console.log(`Transaction sent successfully with signature ${txid}`);
-    } catch (e) {
-      console.error(`Failed to send transaction: ${e}`);
+    } catch (error) {
+      console.error("Transaction Logs:", error.logs);
+      console.error(`Failed to send transaction: ${error}`);
+      return { success: false, error: error };
     }
 
     switch (action) {
@@ -587,6 +587,7 @@ async function handleTransaction(action, TOKEN_ADDR, privateKey, connection) {
         break;
     }
     saveCoinsToFile();
+    return { success: true, txid };
   } catch (error) {
     console.error(`Error during ${action} transaction:`, error.message);
     return;
@@ -603,13 +604,12 @@ async function executeBuySellCycle(tokenAddr, privateKeyList, connection, maxWal
       const message = `Using Wallet ${i + 1} to perform buy transaction...`;
       await sendTelegramMessage(message);
       // Attempt to buy with the current wallet
-      await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
-
+      const transactionResult = await handleTransaction("buy", tokenAddr, privateKeyList[i], connection);
 
       // Recalculate wallet holders
       actWalletHolder = await countWalletHolders(tokenAddr);
 
-      if ((prevWalletHolder + 1) < actWalletHolder) {
+      if (!transactionResult.success || (prevWalletHolder + 1) < actWalletHolder) {
         console.log(`Wallet ${i + 1} buy successful. Selling all wallets used so far...`);
         const message = `Wallet ${i + 1} buy successful. Selling all wallets used so far...`;
         await sendTelegramMessage(message);
@@ -740,7 +740,7 @@ async function main() {
     // Wait until the next full hour or minute
     await countdownAndWait(nextTime);
 
-    startSolBalance = await getTotalSolBalance(privateKeyList);
+    startSolBalance = await getTotalSolBalance(connection, privateKeyList);
 
     // Fetch a new dataset if needed
     if (!assetDatabase || assetLastCheckedIndex >= assetDatabase.result.items.length) {
@@ -752,7 +752,7 @@ async function main() {
       pageCounter++;
     }
     //TOKEN_ADDR = await getNewTokenId();
-    TOKEN_ADDR = "EibT8Ddj8sZ7V8eGM4MzR5FG9QpuW2sTKoffgg4Xpump";
+    TOKEN_ADDR = "B2cQ69uWhC3sLz99FbFvnMivdEBJobgaPj7YtETVpump";
     let currWalletHolder = await countWalletHolders(TOKEN_ADDR);
     const message = `Found new Target: ${TOKEN_ADDR}\ with ${currWalletHolder} holder.`;
     try {
