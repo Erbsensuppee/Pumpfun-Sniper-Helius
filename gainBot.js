@@ -51,9 +51,9 @@ try {
 //
 const RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`; // Replace with your preferred RPC endpoint
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-let TOKEN_ADDR = "B2cQ69uWhC3sLz99FbFvnMivdEBJobgaPj7YtETVpump"; // Replace with your target token address
-const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
-const SLIPPAGE = 50; // 0,5%
+let TOKEN_ADDR = "8FRVErrkZx3s9WNEY7u8GTyWUJpgGx8JyWtuF428pump"; // Replace with your target token address
+const SOL_BUY_AMOUNT = 0.01; // Amount of SOL to use for each purchase
+const SLIPPAGE = 500; // 0,5%
 const maxRetries = 5;
 let assetDatabase = null;
 let pageCounter = 1;
@@ -732,7 +732,7 @@ async function main() {
     }
     if (TOKEN_ADDR !== 0) {
       try {
-        await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 1);
+        await executeBuySellCycle(TOKEN_ADDR, privateKeyList, connection, 8);
       } catch (error) {
         console.log("Error: handleTransaction handler "+ error)
       }
