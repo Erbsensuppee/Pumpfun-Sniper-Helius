@@ -162,7 +162,7 @@ function connectWebSocket() {
             try {
               txid = await swap(
                 SOL_ADDR, 
-                "FsaEyWwhdvAG1qdwNB9tSAMm62UGkigcbRVJE3Zzpump", 
+                tokenMint, 
                 SOL_BUY_AMOUNT, 
                 SLIPPAGE, 
                 maxRetries, 
