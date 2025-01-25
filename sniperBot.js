@@ -14,7 +14,7 @@ let TELEGRAM_CHAT_ID;
 let heliusApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentialsSniper.json', 'utf8'));
-    privateKey = credentials.privateKey;
+    privateKey = credentials.key1;
     TELEGRAM_API_TOKEN = credentials.telegramApiKey;
     TELEGRAM_CHAT_ID = credentials.telegramChatID;
     heliusApiKey = credentials.heliusApiKey;
@@ -24,9 +24,9 @@ try {
 }
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 0.5; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
-const SLIPPAGE = 15; // Slippage tolerance percentage
+const SLIPPAGE = 20; // Slippage tolerance percentage
 
 // Use a paid RPC endpoint here for best performance
 const HeliusURL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
