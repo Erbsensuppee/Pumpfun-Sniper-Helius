@@ -14,7 +14,7 @@ let TELEGRAM_CHAT_ID;
 let heliusApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentialsSniper.json', 'utf8'));
-    privateKey = credentials.key1;
+    privateKey = credentials.key2;
     TELEGRAM_API_TOKEN = credentials.telegramApiKey;
     TELEGRAM_CHAT_ID = credentials.telegramChatID;
     heliusApiKey = credentials.heliusApiKey;
@@ -24,7 +24,7 @@ try {
 }
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-const SOL_BUY_AMOUNT = 0.5; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 5; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 20; // Slippage tolerance percentage
 
@@ -71,6 +71,51 @@ async function checkWebsiteExists(url) {
     }
 }
 
+/**
+ * Fetch creator key and name from the Pump API response.
+ * @param {string} tokenId - The token ID to fetch data for.
+ * @returns {Promise<{ creator: string | null, name: string | null }>} - An object containing the creator key and name, or null if not found.
+ */
+async function fetchCreatorKeyAndName(tokenId) {
+    const apiUrl = `https://frontend-api.pump.fun/coins/${tokenId}`;
+    
+    try {
+        const response = await fetch(apiUrl, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+
+        if (!response.ok) {
+            console.error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+            return { creator: null, name: null };
+        }
+
+        const data = await response.json();
+
+        // Extract and return the creator key and name
+        const creator = data?.creator || null;
+        const name = data?.name || null;
+
+        if (creator) {
+            console.log(`Creator Key: ${creator}`);
+        } else {
+            console.warn("Creator key not found in the response.");
+        }
+
+        if (name) {
+            console.log(`Name: ${name}`);
+        } else {
+            console.warn("Name not found in the response.");
+        }
+
+        return { creator, name };
+    } catch (error) {
+        console.error(`Error fetching data from Pump API: ${error.message}`);
+        return { creator: null, name: null };
+    }
+}
 
 
 async function checkTwitterAccountExists(twitterHandle) {
@@ -110,18 +155,51 @@ let heartbeatTimeout;
 function connectWebSocket() {
     const ws = new WebSocket("wss://pumpportal.fun/api/data");
 
-    function startHeartbeat() {
-        clearTimeout(heartbeatTimeout);
-        heartbeatTimeout = setTimeout(() => {
-            console.error("Connection lost due to heartbeat timeout.");
-            ws.close(); // Force close to trigger reconnection
-        }, 10000); // 10 seconds timeout for pong
+    let heartbeatInterval;
+    let lastHeartbeatTime = Date.now();
+
+    function startHeartbeat(ws) {
+        // Clear any existing intervals
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+
+        // Send periodic pings every 10 minutes
+        heartbeatInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.ping();
+                console.log("Sent heartbeat ping.");
+            } else {
+                console.warn("WebSocket is not open. Stopping heartbeat.");
+                clearInterval(heartbeatInterval);
+            }
+        }, 10 * 60 * 1000); // 10 minutes
+
+        // Monitor the last heartbeat response
+        setInterval(() => {
+            if (Date.now() - lastHeartbeatTime > 30 * 60 * 1000) { // 30 minutes
+                console.error("No heartbeat received in the last 30 minutes. Reconnecting...");
+                ws.close(); // Force reconnection
+            }
+        }, 5 * 60 * 1000); // Check every 5 minutes
     }
+
+    ws.on("pong", function pong() {
+        lastHeartbeatTime = Date.now();
+        console.log("Received heartbeat pong from server.");
+    });
+
+    ws.on("close", function close() {
+        console.warn("WebSocket connection closed. Stopping heartbeat.");
+        clearInterval(heartbeatInterval); // Clear heartbeat on closure
+        setTimeout(() => {
+            connectWebSocket(); // Reconnect after 5 seconds
+        }, 5000);
+    });
+
 
     ws.on("open", function open() {
         // Subscribing to token creation events
         let payload = {
-            method: "subscribeNewToken",
+            method: "subscribeRaydiumLiquidity",
         };
         startHeartbeat();
         ws.send(JSON.stringify(payload));
@@ -131,35 +209,36 @@ function connectWebSocket() {
         startHeartbeat();
         console.log("Token data received:", tokenCreationData);
     
-        // Fetch metadata from the URI if available
-        if (!tokenCreationData.uri) {
-            console.log("No metadata URI available for token:", tokenCreationData.mint);
+        // Check if the message is the specific subscription confirmation
+        if (tokenCreationData.message === "Subscribed to 'addLiquidity' events.") {
+            console.log("Received subscription confirmation. Skipping processing.");
             return;
         }
+        let creatorKey = await fetchCreatorKeyAndName(tokenCreationData.mint)
+        console.log("Key" + creatorKey.creator);
+        console.log("Name" + creatorKey.name);
+
+        let nameTmp = creatorKey.name.toUpperCase();
+        const nameFilter = nameTmp.includes("MANDOGMF");
     
-        // DG FILTER
-        let symbolTmp = tokenCreationData.symbol.toUpperCase();
-        let nameTmp = tokenCreationData.name.toUpperCase();
-        const nameFilter = tokenCreationData.name.includes("MandogMF");
-        const symbolFilter = tokenCreationData.symbol.includes("DKT");
         //const symbolFilter = tokenCreationData.symbol.includes("Your Symbol");
         if (nameFilter) {
-            const message = `🚨 *Token Creation Detected on Pumpfun* 🚨\n\n` +
+            const message = `🚨 *Add Liquidity Detected on Raydium* 🚨\n\n` +
                             `🔹 *Mint:* ${tokenCreationData.mint}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
-                            `🔹 *Creator:* Not DG, it is _${tokenCreationData.traderPublicKey}_\n` +
+                            `🔹 *Creator:* NOT DG, it is _${tokenCreationData.traderPublicKey}_\n` +
                             `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
-        } else if (tokenCreationData.traderPublicKey === DG_Wallet) {
-            const message = `🚨 *Token Creation Detected on Pumpfun* 🚨\n\n` +
+        } else if (creatorKey.creator === DG_Wallet) {
+            const message = `🚨 *Add Liquidity Detected on Raydium* 🚨\n\n` +
                             `🔹 *Mint:* ${tokenCreationData.mint}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
-                            `🔹 *Creator:* DG's Wallet (_${tokenCreationData.traderPublicKey}_)\n` +
+                            `🔹 *Creator:* IS DG's Wallet (_${tokenCreationData.traderPublicKey}_)\n` +
                             `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
         }
         
-        if (nameFilter && tokenCreationData.traderPublicKey === DG_Wallet) {
+        if (nameFilter && creatorKey.creator === DG_Wallet) {
             count = count + 1;
             const tokenMint = tokenCreationData.mint;
             console.log("Buying: " + tokenMint);
