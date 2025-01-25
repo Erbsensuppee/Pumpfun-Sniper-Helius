@@ -22,7 +22,7 @@ try {
     console.error("Failed to load private key:", error.message);
     process.exit(1);
 }
-
+const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
 const SOL_BUY_AMOUNT = 0.001; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
@@ -140,11 +140,26 @@ function connectWebSocket() {
         // DG FILTER
         let symbolTmp = tokenCreationData.symbol.toUpperCase();
         let nameTmp = tokenCreationData.name.toUpperCase();
-        const nameFilter = tokenCreationData.name.includes("Ew2mQaojHQXQ");
+        const nameFilter = tokenCreationData.name.includes("MandogMF");
         const symbolFilter = tokenCreationData.symbol.includes("DKT");
         //const symbolFilter = tokenCreationData.symbol.includes("Your Symbol");
-        
         if (nameFilter) {
+            const message = `🚨 *Token Creation Detected on Pumpfun* 🚨\n\n` +
+                            `🔹 *Mint:* ${tokenCreationData.mint}\n` +
+                            `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
+                            `🔹 *Creator:* Not DG, it is _${tokenCreationData.traderPublicKey}_\n` +
+                            `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
+            await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
+        } else if (tokenCreationData.traderPublicKey === DG_Wallet) {
+            const message = `🚨 *Token Creation Detected on Pumpfun* 🚨\n\n` +
+                            `🔹 *Mint:* ${tokenCreationData.mint}\n` +
+                            `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
+                            `🔹 *Creator:* DG's Wallet (_${tokenCreationData.traderPublicKey}_)\n` +
+                            `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
+            await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
+        }
+        
+        if (nameFilter && tokenCreationData.traderPublicKey === DG_Wallet) {
             count = count + 1;
             const tokenMint = tokenCreationData.mint;
             console.log("Buying: " + tokenMint);
