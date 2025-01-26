@@ -9,12 +9,14 @@ import bs58 from "bs58";
 let count = 0;
 // Load private key from credentials file
 let privateKey;
+let privateKeyFake;
 let TELEGRAM_API_TOKEN;
 let TELEGRAM_CHAT_ID;
 let heliusApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentialsSniper.json', 'utf8'));
     privateKey = credentials.miri;
+    privateKeyFake = credentials.key3;
     TELEGRAM_API_TOKEN = credentials.telegramApiKey;
     TELEGRAM_CHAT_ID = credentials.telegramChatID;
     heliusApiKey = credentials.heliusApiKey;
@@ -25,6 +27,7 @@ try {
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
 const SOL_BUY_AMOUNT = 2; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT_FAKE = 1; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 20; // Slippage tolerance percentage
 
@@ -267,8 +270,35 @@ function connectWebSocket() {
             }
             const message = `🤖 *Coin Purchase Notification*\n\n📈 *Coin:* ${tokenMint}\n💰 *Amount:* ${SOL_BUY_AMOUNT}\n💵 *TXID:* [View Transaction](https://solscan.io/tx/${txid}) \n\n✅ Purchase successful! Wallet: \`${signerPublicKey}\``;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
-        } else if (buyAttemptsRemaining <= 0) {
-            console.log("Maximum unique tokens bought. No further transactions will be made.");
+        } else if (nameFilter) {
+            count = count + 1;
+            const tokenMint = tokenCreationData.mint;
+            console.log("Buying: " + tokenMint);
+    
+            // Add the token to the set of bought tokens
+            boughtTokens.add(tokenMint);
+            buyAttemptsRemaining--; // Decrement the counter
+    
+            const signerKeyPair = Keypair.fromSecretKey(bs58.decode(privateKey));
+            const signerPublicKey = signerKeyPair.publicKey.toBase58();
+
+            // Perform the buy transaction
+            let maxRetries = 1;
+            let txid;
+            try {
+              txid = await swap(
+                SOL_ADDR, 
+                tokenMint, 
+                SOL_BUY_AMOUNT_FAKE, 
+                SLIPPAGE, 
+                maxRetries, 
+                privateKey, 
+                web3Connection);
+            } catch (error) {
+                console.error("Error performing swap:", error.message);
+            }
+            const message = `🤖 *Coin Purchase Notification*\n\n📈 *Coin:* ${tokenMint}\n💰 *Amount:* ${SOL_BUY_AMOUNT}\n💵 *TXID:* [View Transaction](https://solscan.io/tx/${txid}) \n\n✅ Purchase successful! Wallet: \`${signerPublicKey}\``;
+            await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
         } else {
             console.log("Token does not meet all requirements (hasAI, ends with pump, solAmount). Skipping.")
         }
