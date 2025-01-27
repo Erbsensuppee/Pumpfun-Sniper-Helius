@@ -227,14 +227,14 @@ function connectWebSocket() {
         }else{
             symbolFilter = false;
         }
-    
+        //\`${signerPublicKey}\`
         //const symbolFilter = tokenCreationData.symbol.includes("Your Symbol");
         if (symbolFilter) {
             const message = `🚨 *New Token Detected on Pumpfun* 🚨\n\n` +
-                            `🔹 *Mint:* ${tokenCreationData.mint}\n` +
+                            `🔹 *Mint:* \`${tokenCreationData.mint}\`\n` +
                             `🔹 *Name:* ${tokenCreationData.name}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
-                            `🔹 *Creator:* (_${tokenCreationData.traderPublicKey}_)\n` +
+                            `🔹 *Creator:* (_\`${tokenCreationData.traderPublicKey}\`_)\n` +
                             `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
         } else if (false) {
