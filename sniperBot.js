@@ -31,6 +31,10 @@ const SOL_BUY_AMOUNT_FAKE = 1; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 2000; // Slippage tolerance percentage
 
+let ws = null;
+let heartbeatInterval = null;
+let lastHeartbeatTime = Date.now();
+
 // Use a paid RPC endpoint here for best performance
 const HeliusURL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
 const web3Connection = new Connection(HeliusURL);
@@ -153,17 +157,12 @@ async function checkTelegramGroupExists(telegramLink) {
     }
 }
 
-let heartbeatTimeout;
-let heartbeatInterval;
-let lastHeartbeatTime;
+function startHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
 
-const ws = new WebSocket("wss://pumpportal.fun/api/data");
-
-function startHeartbeat(ws) {
-    // Clear any existing intervals
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
-
-    // Send periodic pings every 10 minutes
     heartbeatInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.ping();
@@ -171,44 +170,40 @@ function startHeartbeat(ws) {
         } else {
             console.warn("WebSocket is not open. Stopping heartbeat.");
             clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
         }
-    }, 10 * 60 * 1000); // 10 minutes
+    }, 10 * 60 * 1000); // Alle 10 Minuten ein Ping senden
 
-    // Monitor the last heartbeat response
+    // Überwache die letzte Heartbeat-Antwort
     setInterval(() => {
-        if (Date.now() - lastHeartbeatTime > 30 * 60 * 1000) { // 30 minutes
+        if (Date.now() - lastHeartbeatTime > 30 * 60 * 1000) { // 30 Minuten
             console.error("No heartbeat received in the last 30 minutes. Reconnecting...");
-            ws.close(); // Force reconnection
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
         }
-    }, 5 * 60 * 1000); // Check every 5 minutes
+    }, 5 * 60 * 1000); // Alle 5 Minuten prüfen
 }
 
 function connectWebSocket() {
 
-    lastHeartbeatTime = Date.now();
-
-    ws.on("pong", function pong() {
-        lastHeartbeatTime = Date.now();
-        console.log("Received heartbeat pong from server.");
-    });
-
-    ws.on("close", function close() {
-        console.warn("WebSocket connection closed. Stopping heartbeat.");
-        clearInterval(heartbeatInterval); // Clear heartbeat on closure
-        setTimeout(() => {
-            connectWebSocket(); // Reconnect after 5 seconds
-        }, 5000);
-    });
-
+    ws = new WebSocket("wss://pumpportal.fun/api/data");
 
     ws.on("open", function open() {
         // Subscribing to token creation events
+        console.log("WebSocket connection established.");
         let payload = {
             method: "subscribeRaydiumLiquidity",
         };
         startHeartbeat(ws);
         ws.send(JSON.stringify(payload));
     });
+
+    ws.on("pong", function pong() {
+        lastHeartbeatTime = Date.now();
+        console.log("Received heartbeat pong from server.");
+    });
+
     ws.on("message", async function message(data) {
         const tokenCreationData = JSON.parse(data);
         startHeartbeat(ws);
@@ -306,17 +301,19 @@ function connectWebSocket() {
         }
     });
 
+
     ws.on("close", function close() {
-        console.warn("WebSocket connection closed. Reconnecting...");
-        clearTimeout(heartbeatTimeout);
+        console.warn("WebSocket connection closed. Stopping heartbeat.");
+        console.warn("Attempting to reconnect...");
+        clearInterval(heartbeatInterval); // Clear heartbeat on closure
+        heartbeatInterval = null;
         setTimeout(() => {
-            connectWebSocket();
+            connectWebSocket(); // Reconnect after 5 seconds
         }, 5000);
     });
 
     ws.on("error", function error(err) {
         console.error("WebSocket error:", err.message);
-        console.warn("Attempting to reconnect...");
         ws.close(); // Ensure the 'close' event triggers reconnection
     });
 }
