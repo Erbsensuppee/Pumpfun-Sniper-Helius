@@ -154,36 +154,38 @@ async function checkTelegramGroupExists(telegramLink) {
 }
 
 let heartbeatTimeout;
+let heartbeatInterval;
+let lastHeartbeatTime;
+
+const ws = new WebSocket("wss://pumpportal.fun/api/data");
+
+function startHeartbeat(ws) {
+    // Clear any existing intervals
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+
+    // Send periodic pings every 10 minutes
+    heartbeatInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.ping();
+            console.log("Sent heartbeat ping.");
+        } else {
+            console.warn("WebSocket is not open. Stopping heartbeat.");
+            clearInterval(heartbeatInterval);
+        }
+    }, 10 * 60 * 1000); // 10 minutes
+
+    // Monitor the last heartbeat response
+    setInterval(() => {
+        if (Date.now() - lastHeartbeatTime > 30 * 60 * 1000) { // 30 minutes
+            console.error("No heartbeat received in the last 30 minutes. Reconnecting...");
+            ws.close(); // Force reconnection
+        }
+    }, 5 * 60 * 1000); // Check every 5 minutes
+}
 
 function connectWebSocket() {
-    const ws = new WebSocket("wss://pumpportal.fun/api/data");
 
-    let heartbeatInterval;
-    let lastHeartbeatTime = Date.now();
-
-    function startHeartbeat(ws) {
-        // Clear any existing intervals
-        if (heartbeatInterval) clearInterval(heartbeatInterval);
-
-        // Send periodic pings every 10 minutes
-        heartbeatInterval = setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.ping();
-                console.log("Sent heartbeat ping.");
-            } else {
-                console.warn("WebSocket is not open. Stopping heartbeat.");
-                clearInterval(heartbeatInterval);
-            }
-        }, 10 * 60 * 1000); // 10 minutes
-
-        // Monitor the last heartbeat response
-        setInterval(() => {
-            if (Date.now() - lastHeartbeatTime > 30 * 60 * 1000) { // 30 minutes
-                console.error("No heartbeat received in the last 30 minutes. Reconnecting...");
-                ws.close(); // Force reconnection
-            }
-        }, 5 * 60 * 1000); // Check every 5 minutes
-    }
+    lastHeartbeatTime = Date.now();
 
     ws.on("pong", function pong() {
         lastHeartbeatTime = Date.now();
@@ -204,12 +206,12 @@ function connectWebSocket() {
         let payload = {
             method: "subscribeRaydiumLiquidity",
         };
-        startHeartbeat();
+        startHeartbeat(ws);
         ws.send(JSON.stringify(payload));
     });
     ws.on("message", async function message(data) {
         const tokenCreationData = JSON.parse(data);
-        startHeartbeat();
+        startHeartbeat(ws);
         console.log("Token data received:", tokenCreationData);
     
         // Check if the message is the specific subscription confirmation
@@ -254,7 +256,7 @@ function connectWebSocket() {
             const signerPublicKey = signerKeyPair.publicKey.toBase58();
 
             // Perform the buy transaction
-            let maxRetries = 1;
+            let maxRetries = 5;
             let txid;
             try {
               txid = await swap(
