@@ -15,7 +15,7 @@ let TELEGRAM_CHAT_ID;
 let heliusApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentialsSniper.json', 'utf8'));
-    privateKey = credentials.miri;
+    privateKey = credentials.key2;
     privateKeyFake = credentials.key3;
     TELEGRAM_API_TOKEN = credentials.telegramApiKey;
     TELEGRAM_CHAT_ID = credentials.telegramChatID;
