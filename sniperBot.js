@@ -15,8 +15,7 @@ let TELEGRAM_CHAT_ID;
 let heliusApiKey;
 try {
     const credentials = JSON.parse(fs.readFileSync('./credentialsSniper.json', 'utf8'));
-    privateKey = credentials.miri;
-    privateKeyFake = credentials.key3;
+    privateKey = credentials.miky;
     TELEGRAM_API_TOKEN = credentials.telegramApiKey;
     TELEGRAM_CHAT_ID = credentials.telegramChatID;
     heliusApiKey = credentials.heliusApiKey;
@@ -26,10 +25,10 @@ try {
 }
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-const SOL_BUY_AMOUNT = 2; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 0.1; // Amount of SOL to use for each purchase
 const SOL_BUY_AMOUNT_FAKE = 1; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
-const SLIPPAGE = 20; // Slippage tolerance percentage
+const SLIPPAGE = 1000; // Slippage tolerance percentage
 
 // Use a paid RPC endpoint here for best performance
 const HeliusURL = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
@@ -202,7 +201,7 @@ function connectWebSocket() {
     ws.on("open", function open() {
         // Subscribing to token creation events
         let payload = {
-            method: "subscribeRaydiumLiquidity",
+            method: "subscribeNewToken",
         };
         startHeartbeat();
         ws.send(JSON.stringify(payload));
@@ -213,26 +212,32 @@ function connectWebSocket() {
         console.log("Token data received:", tokenCreationData);
     
         // Check if the message is the specific subscription confirmation
-        if (tokenCreationData.message === "Subscribed to 'addLiquidity' events.") {
+        if (tokenCreationData.message === "Successfully subscribed to token creation events.") {
             console.log("Received subscription confirmation. Skipping processing.");
             return;
         }
-        let creatorKey = await fetchCreatorKeyAndName(tokenCreationData.mint)
-        console.log("Key" + creatorKey.creator);
-        console.log("Name" + creatorKey.name);
+        // let creatorKey = await fetchCreatorKeyAndName(tokenCreationData.mint)
+        // console.log("Key" + creatorKey.creator);
+        // console.log("Name" + creatorKey.name);
 
-        let nameTmp = creatorKey.name.toUpperCase();
-        const nameFilter = nameTmp.includes("MANDOGMF");
+        let symbolTmp = tokenCreationData.symbol.toUpperCase();
+        let symbolFilter;
+        if(symbolTmp === "COOKIE"){
+            symbolFilter = true;
+        }else{
+            symbolFilter = false;
+        }
     
         //const symbolFilter = tokenCreationData.symbol.includes("Your Symbol");
-        if (nameFilter) {
-            const message = `🚨 *Add Liquidity Detected on Raydium* 🚨\n\n` +
+        if (symbolFilter) {
+            const message = `🚨 *New Token Detected on Raydium* 🚨\n\n` +
                             `🔹 *Mint:* ${tokenCreationData.mint}\n` +
+                            `🔹 *Name:* ${tokenCreationData.name}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
-                            `🔹 *Creator:* NOT DG, it is _${tokenCreationData.traderPublicKey}_\n` +
+                            `🔹 *Creator:* (_${tokenCreationData.traderPublicKey}_)\n` +
                             `🔹 *Developer Initial Buy:* ${tokenCreationData.solAmount} SOL`;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
-        } else if (creatorKey.creator === DG_Wallet) {
+        } else if (false) {
             const message = `🚨 *Add Liquidity Detected on Raydium* 🚨\n\n` +
                             `🔹 *Mint:* ${tokenCreationData.mint}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
@@ -241,7 +246,7 @@ function connectWebSocket() {
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
         }
         
-        if (nameFilter && creatorKey.creator === DG_Wallet) {
+        if (symbolFilter && false) {
             count = count + 1;
             const tokenMint = tokenCreationData.mint;
             console.log("Buying: " + tokenMint);
@@ -270,7 +275,7 @@ function connectWebSocket() {
             }
             const message = `🤖 *Coin Purchase Notification*\n\n📈 *Coin:* ${tokenMint}\n💰 *Amount:* ${SOL_BUY_AMOUNT}\n💵 *TXID:* [View Transaction](https://solscan.io/tx/${txid}) \n\n✅ Purchase successful! Wallet: \`${signerPublicKey}\``;
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
-        } else if (nameFilter) {
+        } else if (symbolFilter && false) {
             count = count + 1;
             const tokenMint = tokenCreationData.mint;
             console.log("Buying: " + tokenMint);
