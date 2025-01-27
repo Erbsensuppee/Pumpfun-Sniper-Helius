@@ -230,7 +230,7 @@ function connectWebSocket() {
     
         //const symbolFilter = tokenCreationData.symbol.includes("Your Symbol");
         if (symbolFilter) {
-            const message = `🚨 *New Token Detected on Raydium* 🚨\n\n` +
+            const message = `🚨 *New Token Detected on Pumpfun* 🚨\n\n` +
                             `🔹 *Mint:* ${tokenCreationData.mint}\n` +
                             `🔹 *Name:* ${tokenCreationData.name}\n` +
                             `🔹 *Ticker:* ${tokenCreationData.symbol}\n` +
