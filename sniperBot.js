@@ -25,7 +25,7 @@ try {
 }
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-const SOL_BUY_AMOUNT = 0.1; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 0.2; // Amount of SOL to use for each purchase
 const SOL_BUY_AMOUNT_FAKE = 1; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 1000; // Slippage tolerance percentage
@@ -221,6 +221,8 @@ function connectWebSocket() {
         // console.log("Name" + creatorKey.name);
 
         let symbolTmp = tokenCreationData.symbol.toUpperCase();
+        let nameTmp = tokenCreationData.name.toUpperCase();
+        let nameFilter = nameTmp.includes("CAT") || nameTmp.includes("DOG")
         let symbolFilter;
         if(symbolTmp === "COOKIE"){
             symbolFilter = true;
@@ -246,7 +248,7 @@ function connectWebSocket() {
             await sendTelegramMessage(message, TELEGRAM_API_TOKEN, TELEGRAM_CHAT_ID);
         }
         
-        if (symbolFilter && false) {
+        if (symbolFilter && !nameFilter && (tokenCreationData.solAmount > 1.5)) {
             count = count + 1;
             const tokenMint = tokenCreationData.mint;
             console.log("Buying: " + tokenMint);
