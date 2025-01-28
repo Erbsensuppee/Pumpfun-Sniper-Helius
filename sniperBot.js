@@ -25,7 +25,7 @@ try {
 }
 const DG_Wallet = "G2WGvR38wZ3yZ7kvPS5KvYCrD5yWMbkgJXqzXMmGA1rD"
 const SOL_ADDR = "So11111111111111111111111111111111111111112"
-const SOL_BUY_AMOUNT = 0.2; // Amount of SOL to use for each purchase
+const SOL_BUY_AMOUNT = 0.1; // Amount of SOL to use for each purchase
 const SOL_BUY_AMOUNT_FAKE = 1; // Amount of SOL to use for each purchase
 const FEES = 0.003; // Transaction fees
 const SLIPPAGE = 1000; // Slippage tolerance percentage
